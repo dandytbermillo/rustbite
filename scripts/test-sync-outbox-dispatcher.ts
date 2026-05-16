@@ -126,6 +126,7 @@ async function assertFailureRetries() {
   assert(updated.claimedAt === null, "Retryable failure should clear claimedAt.");
   assert(updated.leaseExpiresAt === null, "Retryable failure should clear leaseExpiresAt.");
   assert(updated.claimedBy === null, "Retryable failure should clear claimedBy.");
+  await prisma.syncOutbox.delete({ where: { id: row.id } });
 }
 
 async function assertTimeoutRetries() {
@@ -147,6 +148,7 @@ async function assertTimeoutRetries() {
     updated.lastError?.includes("timed out"),
     "Timeout should write a timeout lastError."
   );
+  await prisma.syncOutbox.delete({ where: { id: row.id } });
 }
 
 async function assertMaxAttemptsFails() {
@@ -192,6 +194,7 @@ async function assertStaleLeaseReset() {
   assert(updated.claimedAt === null, "Stale lease reset should clear claimedAt.");
   assert(updated.leaseExpiresAt === null, "Stale lease reset should clear leaseExpiresAt.");
   assert(updated.claimedBy === null, "Stale lease reset should clear claimedBy.");
+  await prisma.syncOutbox.delete({ where: { id: row.id } });
 }
 
 async function assertConcurrentDispatchDoesNotDoubleSend() {

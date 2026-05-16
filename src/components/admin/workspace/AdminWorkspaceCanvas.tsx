@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { AdminWorkspaceDashboardSummary } from "@/lib/admin/workspace/dashboard-summary";
 import type { AdminWorkspaceDevicesSummary } from "@/lib/admin/workspace/devices-summary";
@@ -27,10 +27,7 @@ import {
 } from "@/lib/admin/workspace/layout";
 import type { DashboardAttentionSelection } from "@/components/admin/dashboard/DashboardAttentionPanel";
 import AdminWorkspaceWidget from "./AdminWorkspaceWidget";
-import AdminWorkspaceToastHost, {
-  type AdminWorkspaceNotify,
-  type AdminWorkspaceToast,
-} from "./AdminWorkspaceToastHost";
+import type { AdminWorkspaceNotify } from "./AdminWorkspaceToastHost";
 import type { AdminWorkspaceDashboardOrdersOpenRequest } from "./AdminWorkspaceDashboardWidget";
 import type { AdminWorkspaceOrdersFocusRequest } from "./AdminWorkspaceOrdersWidget";
 import type { AdminWorkspaceMenuFocusRequest } from "./AdminWorkspaceMenuWidget";
@@ -302,6 +299,9 @@ export default function AdminWorkspaceCanvas({
   initialOrdersTargetOrderId,
   menuSummary,
   devicesSummary,
+  devicesWidgetAutoRefresh,
+  notify,
+  onDevicesSummaryChange,
   panActivation,
   setPanActivation,
   toolbarFocusRequest,
@@ -320,6 +320,9 @@ export default function AdminWorkspaceCanvas({
   initialOrdersTargetOrderId: string | null;
   menuSummary: AdminWorkspaceMenuSummary | null;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
+  devicesWidgetAutoRefresh?: boolean;
+  notify: AdminWorkspaceNotify;
+  onDevicesSummaryChange: (summary: AdminWorkspaceDevicesSummary) => void;
   /** Pan-mode activation state — owned by AdminWorkspaceClient so the
    *  header button and the canvas's keyboard listener can both update it
    *  through one source of truth. See plan v1.3 step 3a. */
@@ -428,9 +431,6 @@ export default function AdminWorkspaceCanvas({
     height: number;
   } | null>(null);
   const resizePreviewRef = useRef<typeof resizePreview>(null);
-  const [toasts, setToasts] = useState<AdminWorkspaceToast[]>([]);
-  const toastIdRef = useRef(0);
-  const toastTimersRef = useRef<Map<number, number>>(new Map());
 
   const bounds = useMemo(
     () =>
@@ -574,40 +574,12 @@ export default function AdminWorkspaceCanvas({
     layoutWidgetsRef.current = layout.widgets;
   }, [layout.widgets]);
 
-  const dismissToast = useCallback((id: number) => {
-    const timer = toastTimersRef.current.get(id);
-    if (timer) window.clearTimeout(timer);
-    toastTimersRef.current.delete(id);
-    setToasts((current) => current.filter((toast) => toast.id !== id));
-  }, []);
-
-  const notify = useCallback<AdminWorkspaceNotify>(
-    ({ message, tone = "success", durationMs }) => {
-      const id = ++toastIdRef.current;
-      setToasts((current) => [
-        ...current.filter((toast) => toast.message !== message).slice(-2),
-        { id, message, tone },
-      ]);
-
-      const timer = window.setTimeout(
-        () => dismissToast(id),
-        durationMs ?? (tone === "error" ? 6000 : 3200),
-      );
-      toastTimersRef.current.set(id, timer);
-    },
-    [dismissToast],
-  );
-
   useEffect(() => {
     return () => {
       if (viewportPersistTimerRef.current != null) {
         window.clearTimeout(viewportPersistTimerRef.current);
         viewportPersistTimerRef.current = null;
       }
-      for (const timer of toastTimersRef.current.values()) {
-        window.clearTimeout(timer);
-      }
-      toastTimersRef.current.clear();
     };
   }, []);
 
@@ -1540,7 +1512,9 @@ export default function AdminWorkspaceCanvas({
               menuSummary={menuSummary}
               menuFocusRequest={menuFocusRequest}
               devicesSummary={devicesSummary}
+              devicesAutoRefresh={devicesWidgetAutoRefresh ?? true}
               notify={notify}
+              onDevicesSummaryChange={onDevicesSummaryChange}
               returnTarget={
                 returnTarget?.targetWidgetId === widget.id
                   ? returnTarget.sourceWidgetId
@@ -1565,7 +1539,6 @@ export default function AdminWorkspaceCanvas({
           className="pointer-events-none absolute inset-0 z-30 ring-4 ring-inset ring-yellow-400/60"
         />
       )}
-      <AdminWorkspaceToastHost toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

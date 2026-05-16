@@ -934,9 +934,11 @@ function workspaceMoreScope(page: Page, inlineVisible: boolean): Locator {
 async function expectWorkspaceMoreMenu({
   page,
   expectsProtectedLinks,
+  expectsDevicesLink,
 }: {
   page: Page;
   expectsProtectedLinks: boolean;
+  expectsDevicesLink: boolean;
 }) {
   const { scope, inlineVisible } = await openWorkspaceMoreMenu(page);
 
@@ -956,6 +958,16 @@ async function expectWorkspaceMoreMenu({
     ).toHaveCount(0);
     await expect(
       scope.getByTestId("admin-workspace-more-settings"),
+    ).toHaveCount(0);
+  }
+
+  if (expectsDevicesLink) {
+    await expect(
+      scope.getByTestId("admin-workspace-more-manage-devices"),
+    ).toBeVisible();
+  } else {
+    await expect(
+      scope.getByTestId("admin-workspace-more-manage-devices"),
     ).toHaveCount(0);
   }
 
@@ -3901,6 +3913,345 @@ async function expectDevicesWidgetForbidden(page: Page) {
   );
 }
 
+async function openWorkspaceDevicesModal(page: Page): Promise<Locator> {
+  const { inlineVisible } = await openWorkspaceMoreMenu(page);
+  const scope = workspaceMoreScope(page, inlineVisible);
+  const action = scope.getByTestId("admin-workspace-more-manage-devices");
+  await expect(action).toBeVisible();
+  await action.click();
+  await expect(action).toBeHidden();
+
+  const modal = page.getByTestId("admin-workspace-devices-modal");
+  await expect(modal).toBeVisible();
+  const url = new URL(page.url());
+  assert.equal(
+    url.pathname,
+    "/admin/workspace",
+    "Workspace Devices modal should stay on the Workspace route.",
+  );
+  assert.equal(
+    url.searchParams.get("modal"),
+    "devices",
+    "Workspace Devices modal should set modal=devices.",
+  );
+  assert.notEqual(
+    url.pathname,
+    "/admin/devices",
+    "Workspace Devices modal must not navigate to Classic Devices.",
+  );
+  return modal;
+}
+
+async function assertWorkspaceDevicesModalReadOnly(page: Page) {
+  const modal = await openWorkspaceDevicesModal(page);
+  await expect(modal.getByTestId(`workspace-device-row-${deviceOnlineId}`)).toBeVisible();
+  await modal.getByTestId(`workspace-device-row-${deviceOnlineId}`).click();
+  await expect(modal.getByTestId("workspace-device-detail")).toContainText(
+    `${runId} online`,
+  );
+  await expect(modal.getByTestId("workspace-device-edit")).toHaveCount(0);
+  await expect(modal.getByTestId("workspace-device-toggle-active")).toHaveCount(0);
+  await expect(modal.getByTestId("workspace-device-rotate-code")).toHaveCount(0);
+  await expect(modal.getByTestId("workspace-device-enrollment-form")).toHaveCount(0);
+  await expect(modal).toContainText(
+    "Management actions require device manage permission.",
+  );
+  await page.getByTestId("admin-workspace-utility-modal-close").click();
+  await expect(modal).toHaveCount(0);
+}
+
+async function assertWorkspaceDevicesModalOwner(page: Page) {
+  await page.goto(`/admin/workspace?modal=devices&device=${deviceOfflineId}`, {
+    waitUntil: "domcontentloaded",
+  });
+  let modal = page.getByTestId("admin-workspace-devices-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.getByTestId("workspace-device-detail")).toContainText(
+    `${runId} offline`,
+  );
+  await expect(
+    modal.getByTestId(`workspace-device-row-${deviceOfflineId}`),
+  ).toHaveAttribute("aria-current", "true");
+  await page.getByTestId("admin-workspace-utility-modal-close").click();
+  await expect(modal).toHaveCount(0);
+  const closedDeepLinkUrl = new URL(page.url());
+  assert.equal(
+    closedDeepLinkUrl.searchParams.get("modal"),
+    null,
+    "Closing the Devices modal should clear modal state.",
+  );
+  assert.equal(
+    closedDeepLinkUrl.searchParams.get("device"),
+    null,
+    "Closing the Devices modal should clear focused device state.",
+  );
+
+  modal = await openWorkspaceDevicesModal(page);
+  await expect(modal.getByTestId(`workspace-device-row-${deviceOnlineId}`)).toBeVisible();
+  await modal.getByRole("button", { name: "Refresh" }).click();
+  await expect(modal.getByTestId("workspace-devices-real-data")).toBeVisible();
+
+  const enrollmentForm = modal.getByTestId("workspace-device-enrollment-form");
+  const enrollmentName = modal.getByTestId(
+    "workspace-device-enrollment-name-input",
+  );
+  const enrollmentLocation = modal.getByTestId(
+    "workspace-device-enrollment-location-input",
+  );
+  const enrollmentRole = modal.getByTestId(
+    "workspace-device-enrollment-role-select",
+  );
+  await expect(enrollmentForm).toBeVisible();
+  await expect(
+    modal.getByTestId("workspace-device-enrollment-outlet"),
+  ).toContainText(outletAName);
+
+  await enrollmentName.fill(`${runId} dirty enrollment`);
+  const dismissedEnrollmentDirtyClose = new Promise<void>((resolve) => {
+    page.once("dialog", async (dialog) => {
+      assert.equal(dialog.type(), "confirm");
+      assert.match(dialog.message(), /Discard unsaved device changes/);
+      await dialog.dismiss();
+      resolve();
+    });
+  });
+  await page.getByTestId("admin-workspace-utility-modal-close").click();
+  await dismissedEnrollmentDirtyClose;
+  await expect(modal).toBeVisible();
+  await expect(enrollmentName).toHaveValue(`${runId} dirty enrollment`);
+  await modal.getByTestId("workspace-device-enrollment-reset").click();
+  await expect(enrollmentName).toHaveValue("");
+  await expect(enrollmentLocation).toHaveValue("");
+  await expect(enrollmentRole).toHaveValue("kiosk");
+
+  const createRoute = "**/api/admin/devices";
+  await page.route(createRoute, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 428,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "Enter your MFA code before this sensitive action.",
+        errorCode: "step_up_required",
+      }),
+    });
+  });
+  await enrollmentName.fill(`${runId} modal step-up`);
+  await enrollmentLocation.fill("Workspace step-up bay");
+  await enrollmentRole.selectOption("counter");
+  await modal.getByTestId("workspace-device-enrollment-submit").click();
+  await expect(modal.getByTestId("workspace-device-step-up")).toBeVisible();
+  await expect(modal.getByTestId("workspace-device-action-error")).toContainText(
+    "Verify below, then run the action again.",
+  );
+  await expect(enrollmentName).toHaveValue(`${runId} modal step-up`);
+  await expect(enrollmentLocation).toHaveValue("Workspace step-up bay");
+  await expect(enrollmentRole).toHaveValue("counter");
+  await page.unroute(createRoute);
+
+  await page.route(createRoute, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 428,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "MFA enrollment is required before this sensitive action.",
+        errorCode: "mfa_enrollment_required",
+      }),
+    });
+  });
+  await modal.getByTestId("workspace-device-enrollment-submit").click();
+  await expect(modal.getByTestId("workspace-device-step-up")).toHaveCount(0);
+  await expect(modal.getByTestId("workspace-device-action-error")).toContainText(
+    "Open Security > MFA setup first.",
+  );
+  await expect(enrollmentName).toHaveValue(`${runId} modal step-up`);
+  await expect(enrollmentLocation).toHaveValue("Workspace step-up bay");
+  await expect(enrollmentRole).toHaveValue("counter");
+  await page.unroute(createRoute);
+
+  const enrolledDeviceName = `${runId} modal enrolled`;
+  const capturedCreatePayload: { current: Record<string, unknown> | null } = {
+    current: null,
+  };
+  await page.route(createRoute, async (route) => {
+    if (route.request().method() === "POST") {
+      capturedCreatePayload.current = route.request().postDataJSON() as Record<
+        string,
+        unknown
+      >;
+    }
+    await route.continue();
+  });
+  const summaryRoute = "**/api/admin/workspace/devices/summary";
+  await page.route(summaryRoute, async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "forced_devices_summary_refresh_failure" }),
+    });
+  });
+  await enrollmentName.fill(enrolledDeviceName);
+  await enrollmentLocation.fill("Workspace enrollment bay");
+  await enrollmentRole.selectOption("counter");
+  await modal.getByTestId("workspace-device-enrollment-submit").click();
+  await expect(modal.getByTestId("workspace-device-create-access-code")).toBeVisible();
+  await expect(modal).toContainText("Device refresh failed");
+  assert(
+    capturedCreatePayload.current,
+    "Workspace enrollment create payload was captured.",
+  );
+  const createPayload = capturedCreatePayload.current;
+  assert.equal(createPayload.outletId, outletAId);
+  assert.equal(createPayload.isSharedAcrossOutlets, false);
+  assert.deepEqual(createPayload.sharedOutletIds, []);
+  assert.equal(createPayload.role, "counter");
+  assert.equal(createPayload.physicalLocation, "Workspace enrollment bay");
+
+  let enrolledDeviceId: string | null = null;
+  await expect
+    .poll(async () => {
+      const device = await prisma.device.findFirst({
+        where: { name: enrolledDeviceName },
+        select: {
+          id: true,
+          outletId: true,
+          physicalLocation: true,
+          role: true,
+          isSharedAcrossOutlets: true,
+        },
+      });
+      enrolledDeviceId = device?.id ?? null;
+      return [
+        device?.outletId,
+        device?.physicalLocation,
+        device?.role,
+        String(device?.isSharedAcrossOutlets),
+      ].join(":");
+    })
+    .toBe(`${outletAId}:Workspace enrollment bay:counter:false`);
+  assert(enrolledDeviceId, "Workspace enrollment should create a device row.");
+  assert.equal(
+    await prisma.deviceOutletAccess.count({
+      where: { deviceId: enrolledDeviceId },
+    }),
+    0,
+    "Workspace enrollment should not create shared outlet access rows.",
+  );
+  await page.unroute(summaryRoute);
+  await page.unroute(createRoute);
+  await modal.getByRole("button", { name: "Refresh" }).click();
+  await expect(modal.getByTestId(`workspace-device-row-${enrolledDeviceId}`)).toBeVisible();
+
+  await modal.getByTestId(`workspace-device-row-${deviceOnlineId}`).click();
+  await expect(modal.getByTestId("workspace-device-detail")).toContainText(
+    `${runId} online`,
+  );
+
+  await modal.getByTestId("workspace-device-edit").click();
+  await expect(modal.getByTestId("workspace-device-inline-editor")).toBeVisible();
+  await expect(page.getByTestId("workspace-device-editor-modal")).toHaveCount(0);
+  await modal
+    .getByTestId("workspace-device-editor-name-input")
+    .fill(`${runId} online modal renamed`);
+  await modal
+    .getByTestId("workspace-device-editor-location-input")
+    .fill("Workspace modal counter");
+
+  const dismissedDirtyClose = new Promise<void>((resolve) => {
+    page.once("dialog", async (dialog) => {
+      assert.equal(dialog.type(), "confirm");
+      assert.match(dialog.message(), /Discard unsaved device changes/);
+      await dialog.dismiss();
+      resolve();
+    });
+  });
+  await page.getByTestId("admin-workspace-utility-modal-close").click();
+  await dismissedDirtyClose;
+  await expect(modal).toBeVisible();
+  await expect(modal.getByTestId("workspace-device-inline-editor")).toBeVisible();
+
+  await modal.getByTestId("workspace-device-editor-save").click();
+  await expect(modal.getByTestId("workspace-device-inline-editor")).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const device = await prisma.device.findUnique({
+        where: { id: deviceOnlineId },
+        select: { name: true, physicalLocation: true },
+      });
+      return `${device?.name}:${device?.physicalLocation}`;
+    })
+    .toBe(`${runId} online modal renamed:Workspace modal counter`);
+  await expect(
+    page
+      .getByTestId("admin-workspace-toast")
+      .filter({ hasText: `Device updated: ${runId} online modal renamed` }),
+  ).toBeVisible();
+
+  const activeRoute = `**/api/admin/devices/${deviceOnlineId}/active`;
+  await page.route(activeRoute, async (route) => {
+    await route.fulfill({
+      status: 428,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "Enter your MFA code before this sensitive action.",
+        errorCode: "step_up_required",
+      }),
+    });
+  });
+  await modal.getByTestId("workspace-device-toggle-active").click();
+  await expect(modal.getByTestId("workspace-device-step-up")).toBeVisible();
+  await expect(modal.getByTestId("workspace-device-action-error")).toContainText(
+    "Verify below, then run the action again.",
+  );
+  await page.unroute(activeRoute);
+
+  const rotateRoute = `**/api/admin/devices/${deviceOnlineId}/rotate`;
+  await page.route(rotateRoute, async (route) => {
+    await route.fulfill({
+      status: 428,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "MFA enrollment is required before this sensitive action.",
+        errorCode: "mfa_enrollment_required",
+      }),
+    });
+  });
+  await modal.getByTestId("workspace-device-rotate-code").click();
+  await expect(modal.getByTestId("workspace-device-step-up")).toHaveCount(0);
+  await expect(modal.getByTestId("workspace-device-action-error")).toContainText(
+    "Open Security > MFA setup first.",
+  );
+  await page.unroute(rotateRoute);
+
+  await modal.getByTestId("workspace-device-rotate-code").click();
+  await expect(modal.getByTestId("workspace-device-access-code")).toBeVisible();
+  await page.getByTestId("admin-workspace-utility-modal-close").click();
+  await expect(modal).toHaveCount(0);
+  const closedUrl = new URL(page.url());
+  assert.equal(
+    closedUrl.searchParams.get("modal"),
+    null,
+    "Closing the Devices modal should clear modal=devices.",
+  );
+  await expect(page.getByTestId("admin-workspace-widget-devices")).toContainText(
+    enrolledDeviceName,
+  );
+
+  modal = await openWorkspaceDevicesModal(page);
+  await expect(modal.getByTestId("workspace-device-create-access-code")).toHaveCount(0);
+  await modal.getByTestId(`workspace-device-row-${deviceOnlineId}`).click();
+  await expect(modal.getByTestId("workspace-device-access-code")).toHaveCount(0);
+  await page.getByTestId("admin-workspace-utility-modal-close").click();
+  await expect(modal).toHaveCount(0);
+}
+
 async function assertWorkspaceDevicesActions({
   browser,
   ownerToken,
@@ -3949,6 +4300,7 @@ async function assertWorkspaceDevicesActions({
       null,
       "Denied manager rotate must not rotate the device code.",
     );
+    await assertWorkspaceDevicesModalReadOnly(manager.page);
   } finally {
     await manager.context.close();
   }
@@ -4063,6 +4415,8 @@ async function assertWorkspaceDevicesActions({
       "/admin/workspace",
       "Workspace device rotate should not navigate to Classic Devices.",
     );
+
+    await assertWorkspaceDevicesModalOwner(page);
   } finally {
     await context.close();
   }
@@ -4124,6 +4478,7 @@ async function assertRoleWorkspace({
       await expectWorkspaceMoreMenu({
         page,
         expectsProtectedLinks: role !== "operator",
+        expectsDevicesLink: expectsDeviceHealth,
       });
       await expect(page.getByTestId("admin-mode-switch")).toHaveCount(0);
       await expect(page.getByTestId("admin-mode-workspace")).toHaveCount(0);
@@ -4753,6 +5108,17 @@ async function main() {
   const browser = await launchSmokeBrowser();
 
   try {
+    if (process.env.ADMIN_WORKSPACE_BROWSER_SMOKE_ONLY === "devices") {
+      await assertWorkspaceDevicesActions({
+        browser,
+        ownerToken: fixture.tokens.owner,
+        managerToken: fixture.tokens.manager,
+      });
+      console.log("- workspace device actions smoke passed");
+      console.log("Admin workspace browser smoke passed.");
+      return;
+    }
+
     await assertRoleWorkspace({
       browser,
       role: "owner",

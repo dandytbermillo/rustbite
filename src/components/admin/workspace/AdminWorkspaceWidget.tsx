@@ -43,7 +43,9 @@ function PlaceholderBody({
   menuSummary,
   menuFocusRequest,
   devicesSummary,
+  devicesAutoRefresh,
   notify,
+  onDevicesSummaryChange,
   onDashboardOrdersOpen,
   onAttentionItemSelect,
   widgetWidth,
@@ -59,7 +61,9 @@ function PlaceholderBody({
   menuSummary: AdminWorkspaceMenuSummary | null;
   menuFocusRequest: AdminWorkspaceMenuFocusRequest | null;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
+  devicesAutoRefresh: boolean;
   notify: AdminWorkspaceNotify;
+  onDevicesSummaryChange: (summary: AdminWorkspaceDevicesSummary) => void;
   onDashboardOrdersOpen: (
     request: AdminWorkspaceDashboardOrdersOpenRequest,
   ) => void;
@@ -148,7 +152,12 @@ function PlaceholderBody({
   if (widget.id === "devices") {
     if (devicesSummary) {
       return (
-        <AdminWorkspaceDevicesWidget summary={devicesSummary} notify={notify} />
+        <AdminWorkspaceDevicesWidget
+          summary={devicesSummary}
+          notify={notify}
+          autoRefresh={devicesAutoRefresh}
+          onSummaryChange={onDevicesSummaryChange}
+        />
       );
     }
 
@@ -264,7 +273,9 @@ export default function AdminWorkspaceWidget({
   menuSummary,
   menuFocusRequest,
   devicesSummary,
+  devicesAutoRefresh,
   notify,
+  onDevicesSummaryChange,
   returnTarget,
   isMaximized,
   onDashboardOrdersOpen,
@@ -289,7 +300,9 @@ export default function AdminWorkspaceWidget({
   menuSummary: AdminWorkspaceMenuSummary | null;
   menuFocusRequest: AdminWorkspaceMenuFocusRequest | null;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
+  devicesAutoRefresh: boolean;
   notify: AdminWorkspaceNotify;
+  onDevicesSummaryChange: (summary: AdminWorkspaceDevicesSummary) => void;
   returnTarget: AdminWorkspaceWidgetId | null;
   isMaximized: boolean;
   onDashboardOrdersOpen: (
@@ -412,7 +425,9 @@ export default function AdminWorkspaceWidget({
           menuSummary={menuSummary}
           menuFocusRequest={menuFocusRequest}
           devicesSummary={devicesSummary}
+          devicesAutoRefresh={devicesAutoRefresh}
           notify={notify}
+          onDevicesSummaryChange={onDevicesSummaryChange}
           onDashboardOrdersOpen={onDashboardOrdersOpen}
           onAttentionItemSelect={onAttentionItemSelect}
           widgetWidth={displayWidth}

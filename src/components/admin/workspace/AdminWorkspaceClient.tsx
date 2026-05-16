@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
 import AdminFullscreenButton from "@/components/admin/AdminFullscreenButton";
@@ -21,8 +21,17 @@ import {
   type AdminWorkspaceWidgetId,
 } from "@/lib/admin/workspace/layout";
 import AdminWorkspaceCanvas from "./AdminWorkspaceCanvas";
+import AdminWorkspaceToastHost, {
+  type AdminWorkspaceNotify,
+  type AdminWorkspaceToast,
+} from "./AdminWorkspaceToastHost";
+import WorkspaceDevicesPanel from "./WorkspaceDevicesPanel";
 
-export type WorkspaceUtilityModal = "dealHistory" | "settings" | "security";
+export type WorkspaceUtilityModal =
+  | "dealHistory"
+  | "settings"
+  | "security"
+  | "devices";
 
 function utilityModalSearchValue(modal: WorkspaceUtilityModal): string {
   return modal === "dealHistory" ? "deal-history" : modal;
@@ -32,10 +41,12 @@ function utilityModalAllowed(
   modal: WorkspaceUtilityModal | null,
   canReadDealHistory: boolean,
   canReadSettings: boolean,
+  canReadDevices: boolean,
 ): modal is WorkspaceUtilityModal {
   if (!modal) return false;
   if (modal === "dealHistory") return canReadDealHistory;
   if (modal === "settings") return canReadSettings;
+  if (modal === "devices") return canReadDevices;
   return true;
 }
 
@@ -48,10 +59,12 @@ export default function AdminWorkspaceClient({
   access,
   canWriteMenu,
   canManageDevices,
+  canReadDevices,
   canReadDealHistory,
   canReadSettings,
   initialFocusWidgetId,
   initialUtilityModal,
+  initialDevicesModalDeviceId,
   dashboardSummary,
   ordersSummary,
   initialOrdersTargetOrderId,
@@ -66,10 +79,12 @@ export default function AdminWorkspaceClient({
   access: AdminWorkspaceWidgetAccess[];
   canWriteMenu: boolean;
   canManageDevices: boolean;
+  canReadDevices: boolean;
   canReadDealHistory: boolean;
   canReadSettings: boolean;
   initialFocusWidgetId: AdminWorkspaceWidgetId | null;
   initialUtilityModal: WorkspaceUtilityModal | null;
+  initialDevicesModalDeviceId: string | null;
   dashboardSummary: AdminWorkspaceDashboardSummary;
   ordersSummary: AdminWorkspaceOrdersSummary | null;
   initialOrdersTargetOrderId: string | null;
@@ -77,6 +92,19 @@ export default function AdminWorkspaceClient({
   devicesSummary: AdminWorkspaceDevicesSummary | null;
 }) {
   const visibleCount = access.filter((entry) => entry.canView).length;
+  const [currentDevicesSummary, setCurrentDevicesSummary] =
+    useState(devicesSummary);
+
+  useEffect(() => {
+    setCurrentDevicesSummary(devicesSummary);
+  }, [devicesSummary]);
+
+  const handleDevicesSummaryChange = useCallback(
+    (nextSummary: AdminWorkspaceDevicesSummary) => {
+      setCurrentDevicesSummary(nextSummary);
+    },
+    [],
+  );
 
   // Pan-mode activation state. The button toggles "button" mode here; the
   // canvas's keyboard listener toggles "space" mode through setPanActivation.
@@ -124,7 +152,12 @@ export default function AdminWorkspaceClient({
   const overflowCloseTimerRef = useRef<number | null>(null);
   const [activeUtilityModal, setActiveUtilityModal] =
     useState<WorkspaceUtilityModal | null>(
-      utilityModalAllowed(initialUtilityModal, canReadDealHistory, canReadSettings)
+      utilityModalAllowed(
+        initialUtilityModal,
+        canReadDealHistory,
+        canReadSettings,
+        canReadDevices,
+      )
         ? initialUtilityModal
         : null,
     );
@@ -135,6 +168,33 @@ export default function AdminWorkspaceClient({
       | { type: "restoreDealFromHistory"; entry: DealHistoryEntry };
   } | null>(null);
   const menuUtilityRequestIdRef = useRef(0);
+  const [toasts, setToasts] = useState<AdminWorkspaceToast[]>([]);
+  const toastIdRef = useRef(0);
+  const toastTimersRef = useRef<Map<number, number>>(new Map());
+
+  const dismissToast = useCallback((id: number) => {
+    const timer = toastTimersRef.current.get(id);
+    if (timer) window.clearTimeout(timer);
+    toastTimersRef.current.delete(id);
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  const notify = useCallback<AdminWorkspaceNotify>(
+    ({ message, tone = "success", durationMs }) => {
+      const id = ++toastIdRef.current;
+      setToasts((current) => [
+        ...current.filter((toast) => toast.message !== message).slice(-2),
+        { id, message, tone },
+      ]);
+
+      const timer = window.setTimeout(
+        () => dismissToast(id),
+        durationMs ?? (tone === "error" ? 6000 : 3200),
+      );
+      toastTimersRef.current.set(id, timer);
+    },
+    [dismissToast],
+  );
 
   function openOverflowMenu() {
     if (overflowCloseTimerRef.current !== null) {
@@ -169,8 +229,10 @@ export default function AdminWorkspaceClient({
     const url = new URL(window.location.href);
     if (modal) {
       url.searchParams.set("modal", utilityModalSearchValue(modal));
+      if (modal !== "devices") url.searchParams.delete("device");
     } else {
       url.searchParams.delete("modal");
+      url.searchParams.delete("device");
     }
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
@@ -182,6 +244,10 @@ export default function AdminWorkspaceClient({
       if (overflowCloseTimerRef.current !== null) {
         window.clearTimeout(overflowCloseTimerRef.current);
       }
+      for (const timer of toastTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      toastTimersRef.current.clear();
     };
   }, []);
 
@@ -200,7 +266,16 @@ export default function AdminWorkspaceClient({
   }
 
   function openUtilityModal(modal: WorkspaceUtilityModal): void {
-    if (!utilityModalAllowed(modal, canReadDealHistory, canReadSettings)) return;
+    if (
+      !utilityModalAllowed(
+        modal,
+        canReadDealHistory,
+        canReadSettings,
+        canReadDevices,
+      )
+    ) {
+      return;
+    }
     setPanActivation(null);
     closeOverflowMenuNow();
     setActiveUtilityModal(modal);
@@ -337,6 +412,7 @@ export default function AdminWorkspaceClient({
               <WorkspaceMoreMenu
                 canReadDealHistory={canReadDealHistory}
                 canReadSettings={canReadSettings}
+                canReadDevices={canReadDevices}
                 onOpenUtility={openUtilityModal}
               />
             </nav>
@@ -387,6 +463,7 @@ export default function AdminWorkspaceClient({
                   <WorkspaceMoreLinks
                     canReadDealHistory={canReadDealHistory}
                     canReadSettings={canReadSettings}
+                    canReadDevices={canReadDevices}
                     onOpenUtility={openUtilityModal}
                     compact
                   />
@@ -436,7 +513,10 @@ export default function AdminWorkspaceClient({
           ordersSummary={ordersSummary}
           initialOrdersTargetOrderId={initialOrdersTargetOrderId}
           menuSummary={menuSummary}
-          devicesSummary={devicesSummary}
+          devicesSummary={currentDevicesSummary}
+          devicesWidgetAutoRefresh={activeUtilityModal !== "devices"}
+          notify={notify}
+          onDevicesSummaryChange={handleDevicesSummaryChange}
           panActivation={panActivation}
           setPanActivation={setPanActivation}
           toolbarFocusRequest={toolbarFocusRequest}
@@ -448,10 +528,16 @@ export default function AdminWorkspaceClient({
         <WorkspaceUtilityDialog
           modal={activeUtilityModal}
           canWriteMenu={canWriteMenu}
+          canManageDevices={canManageDevices}
+          devicesSummary={currentDevicesSummary}
+          initialDevicesModalDeviceId={initialDevicesModalDeviceId}
+          notify={notify}
+          onDevicesSummaryChange={handleDevicesSummaryChange}
           onRestoreDeal={restoreDealFromHistoryInWorkspace}
           onClose={closeUtilityModal}
         />
       )}
+      <AdminWorkspaceToastHost toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
@@ -459,10 +545,12 @@ export default function AdminWorkspaceClient({
 function WorkspaceMoreMenu({
   canReadDealHistory,
   canReadSettings,
+  canReadDevices,
   onOpenUtility,
 }: {
   canReadDealHistory: boolean;
   canReadSettings: boolean;
+  canReadDevices: boolean;
   onOpenUtility: (modal: WorkspaceUtilityModal) => void;
 }) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
@@ -507,6 +595,7 @@ function WorkspaceMoreMenu({
         <WorkspaceMoreLinks
           canReadDealHistory={canReadDealHistory}
           canReadSettings={canReadSettings}
+          canReadDevices={canReadDevices}
           onOpenUtility={(modal) => {
             detailsRef.current?.removeAttribute("open");
             onOpenUtility(modal);
@@ -520,11 +609,13 @@ function WorkspaceMoreMenu({
 function WorkspaceMoreLinks({
   canReadDealHistory,
   canReadSettings,
+  canReadDevices,
   onOpenUtility,
   compact = false,
 }: {
   canReadDealHistory: boolean;
   canReadSettings: boolean;
+  canReadDevices: boolean;
   onOpenUtility: (modal: WorkspaceUtilityModal) => void;
   compact?: boolean;
 }) {
@@ -535,6 +626,15 @@ function WorkspaceMoreLinks({
             modal: "dealHistory" as const,
             label: "Deal history",
             testId: "deal-history",
+          },
+        ]
+      : []),
+    ...(canReadDevices
+      ? [
+          {
+            modal: "devices" as const,
+            label: "Manage devices",
+            testId: "manage-devices",
           },
         ]
       : []),
@@ -581,36 +681,69 @@ function WorkspaceMoreLinks({
 function WorkspaceUtilityDialog({
   modal,
   canWriteMenu,
+  canManageDevices,
+  devicesSummary,
+  initialDevicesModalDeviceId,
+  notify,
+  onDevicesSummaryChange,
   onRestoreDeal,
   onClose,
 }: {
   modal: WorkspaceUtilityModal;
   canWriteMenu: boolean;
+  canManageDevices: boolean;
+  devicesSummary: AdminWorkspaceDevicesSummary | null;
+  initialDevicesModalDeviceId: string | null;
+  notify: AdminWorkspaceNotify;
+  onDevicesSummaryChange: (summary: AdminWorkspaceDevicesSummary) => void;
   onRestoreDeal: (entry: DealHistoryEntry) => void;
   onClose: () => void;
 }) {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [devicesDirty, setDevicesDirty] = useState(false);
   const title =
     modal === "dealHistory"
       ? "Deal history"
       : modal === "settings"
         ? "Settings"
-        : "Security";
+        : modal === "devices"
+          ? "Devices"
+          : "Security";
+
+  const requestClose = useCallback(() => {
+    if (
+      modal === "devices" &&
+      devicesDirty &&
+      !window.confirm(
+        "Discard unsaved device changes? Your changes will not be saved.",
+      )
+    ) {
+      return;
+    }
+    onClose();
+  }, [devicesDirty, modal, onClose]);
 
   useEffect(() => {
     closeButtonRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") requestClose();
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [requestClose]);
+
+  useEffect(() => {
+    setDevicesDirty(false);
+  }, [modal]);
 
   return (
     <div
       className="fixed inset-0 z-[240] bg-black/55 p-4 backdrop-blur-sm sm:p-6"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <section
@@ -635,7 +768,7 @@ function WorkspaceUtilityDialog({
           <button
             ref={closeButtonRef}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             data-testid="admin-workspace-utility-modal-close"
             className="rounded-full border border-stone-300 bg-white px-5 py-3 text-xs font-black uppercase tracking-widest text-stone-800 hover:border-stone-950 hover:bg-stone-950 hover:text-white"
           >
@@ -650,6 +783,21 @@ function WorkspaceUtilityDialog({
             />
           ) : modal === "settings" ? (
             <WorkspaceSettingsPanel />
+          ) : modal === "devices" ? (
+            devicesSummary ? (
+              <WorkspaceDevicesPanel
+                initialSummary={devicesSummary}
+                notify={notify}
+                variant="modal"
+                autoRefresh
+                initialDeviceId={initialDevicesModalDeviceId}
+                canManageDevices={canManageDevices}
+                onDirtyChange={setDevicesDirty}
+                onSummaryChange={onDevicesSummaryChange}
+              />
+            ) : (
+              <WorkspaceUtilityError message="Device summary is not available for this role." />
+            )
           ) : (
             <MfaClient showHeader={false} />
           )}

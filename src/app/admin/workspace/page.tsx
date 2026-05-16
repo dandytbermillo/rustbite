@@ -62,6 +62,8 @@ function parseWorkspaceUtilityModal(
       return "settings";
     case "security":
       return "security";
+    case "devices":
+      return "devices";
     default:
       return null;
   }
@@ -90,6 +92,10 @@ export default async function AdminWorkspacePage({
   const requestedUtilityModal = parseWorkspaceUtilityModal(
     firstSearchValue(resolvedSearchParams.modal),
   );
+  const initialDevicesModalDeviceId =
+    requestedUtilityModal === "devices"
+      ? (firstSearchValue(resolvedSearchParams.device) ?? null)
+      : null;
 
   const [
     canReadOrders,
@@ -149,7 +155,9 @@ export default async function AdminWorkspacePage({
       ? null
       : requestedUtilityModal === "settings" && !canReadSettings
         ? null
-        : requestedUtilityModal;
+        : requestedUtilityModal === "devices" && !canReadDevices
+          ? null
+          : requestedUtilityModal;
   const cookieStore = await cookies();
   const [dashboardSummary, ordersSummary, menuSummary, devicesSummary] =
     await Promise.all([
@@ -186,10 +194,12 @@ export default async function AdminWorkspacePage({
       access={access}
       canWriteMenu={canWriteMenu}
       canManageDevices={canManageDevices}
+      canReadDevices={canReadDevices}
       canReadDealHistory={canReadDealHistory}
       canReadSettings={canReadSettings}
       initialFocusWidgetId={initialFocusWidgetId}
       initialUtilityModal={initialUtilityModal}
+      initialDevicesModalDeviceId={initialDevicesModalDeviceId}
       dashboardSummary={dashboardSummary}
       ordersSummary={ordersSummary}
       initialOrdersTargetOrderId={initialOrdersTargetOrderId}
