@@ -13,3 +13,5 @@ services:
       - rushbite_pgdata:/var/lib/postgresql/data
 volumes:
   rushbite_pgdata:
+
+
