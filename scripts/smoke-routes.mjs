@@ -37,6 +37,16 @@ const probes = [
     allowedStatuses: [401, 403, 405],
     label: "POST-only payment sessions route",
   },
+  {
+    path: "/api/health",
+    allowedStatuses: [200, 429],
+    label: "liveness health endpoint",
+  },
+  {
+    path: "/api/health/ready",
+    allowedStatuses: [200, 503, 429],
+    label: "readiness health endpoint",
+  },
 ];
 
 function sleep(ms) {

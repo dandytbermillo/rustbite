@@ -79,9 +79,15 @@ async function main() {
   const reqId = generateRequestId();
   const header = await buildInternalRequestIdHeader(reqId, TEST_SECRET);
 
-  // Tamper with the signature
+  // Tamper with the signature. Flip the FIRST base64url char, not the
+  // last: the final char of a 32-byte (256-bit) HMAC encodes only 4 data
+  // bits + 2 zero padding bits, so e.g. 'A'↔'B' there can decode to the
+  // SAME bytes and verify would still (correctly) pass — that made the
+  // old last-char tamper intermittently fail. The first char is 6 full
+  // data bits, so A↔B there always changes the decoded signature and
+  // verify must reject it deterministically.
   const [, sig] = header.split(".");
-  const tamperedSig = sig.slice(0, -1) + (sig.slice(-1) === "A" ? "B" : "A");
+  const tamperedSig = (sig[0] === "A" ? "B" : "A") + sig.slice(1);
   const forged = `${reqId}.${tamperedSig}`;
   const result = await verifyInternalRequestIdHeader(forged, TEST_SECRET);
   assert.equal(result, null, "tampered signature must fail verify");

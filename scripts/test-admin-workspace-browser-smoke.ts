@@ -8,6 +8,7 @@ import {
   chromium,
   expect,
   type Browser,
+  type BrowserContext,
   type Locator,
   type Page,
 } from "@playwright/test";
@@ -20,6 +21,7 @@ import {
   toDealScheduleDateInputValue,
   toDealScheduleTimeInputValue,
 } from "@/lib/deal-schedule";
+import { getOutletMenuVersion } from "@/lib/outlet-menu-sync";
 
 const baseUrl =
   process.env.ADMIN_WORKSPACE_BROWSER_BASE_URL ??
@@ -2686,9 +2688,12 @@ async function assertWorkspaceDealLimitEditorContext(
       dealBaseMenuItemId: true,
       dealBaseSizeId: true,
       dealBaseSizeNameSnapshot: true,
+      dealStartsAt: true,
+      dealExpiresAt: true,
       dealLimitMode: true,
       dealLimitQty: true,
       dealLimitLowThreshold: true,
+      isActive: true,
     },
   });
   assert(originalDealState, "Workspace deal limit smoke requires a deal row.");
@@ -2702,43 +2707,21 @@ async function assertWorkspaceDealLimitEditorContext(
       sizeNameSnapshot: true,
     },
   });
-  await prisma.menuItem.update({
-    where: { id: itemDealId },
-    data: {
-      dealBaseMenuItemId: itemLowId,
-      dealBaseSizeId: null,
-      dealBaseSizeNameSnapshot: null,
-      dealLimitMode: "LIMITED",
-      dealLimitQty: dealLimitSmokeQty,
-      dealLimitLowThreshold: dealLimitSmokeLowThreshold,
-    },
-  });
-  await prisma.upgradeItemLink.updateMany({
-    where: { upgradeOptionId: dealUpgrade.id },
-    data: {
-      linkedMenuItemId: itemLowId,
-      linkedSizeId: null,
-      itemNameSnapshot: `${runId} Low Stock Fries`,
-      sizeNameSnapshot: null,
-    },
-  });
-
-  const { context, page } = await newWorkspacePage({
-    browser,
-    token,
-    viewport: { width: 1440, height: 950 },
-  });
+  let context: BrowserContext | null = null;
+  let page: Page | null = null;
 
   async function openDealEditor() {
-    await page.goto(`/admin/workspace?widget=menu&item=${itemDealId}`, {
+    assert(page, "Workspace deal limit smoke page was not initialized.");
+    const workspacePage = page;
+    await workspacePage.goto(`/admin/workspace?widget=menu&item=${itemDealId}`, {
       waitUntil: "domcontentloaded",
     });
-    await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
-    const widget = page.getByTestId("admin-workspace-widget-menu");
+    await expect(workspacePage.getByTestId("admin-workspace-header")).toBeVisible();
+    const widget = workspacePage.getByTestId("admin-workspace-widget-menu");
     const targetRow = widget.getByTestId("workspace-menu-target-row");
     await expect(targetRow).toContainText(`${runId} Attention Deal`);
     await targetRow.getByTestId("workspace-menu-edit-item").click();
-    const dialog = page.getByRole("dialog", { name: "Edit deal" });
+    const dialog = workspacePage.getByRole("dialog", { name: "Edit deal" });
     await expect(dialog).toBeVisible();
     return dialog;
   }
@@ -2765,9 +2748,11 @@ async function assertWorkspaceDealLimitEditorContext(
   }
 
   async function clickAndAcceptPrompt(action: () => Promise<unknown>) {
+    assert(page, "Workspace deal limit smoke page was not initialized.");
+    const workspacePage = page;
     let message = "";
     const promptHandled = new Promise<void>((resolve) => {
-      page.once("dialog", async (dialog) => {
+      workspacePage.once("dialog", async (dialog) => {
         message = dialog.message();
         await dialog.accept();
         resolve();
@@ -2779,6 +2764,38 @@ async function assertWorkspaceDealLimitEditorContext(
   }
 
   try {
+    await prisma.menuItem.update({
+      where: { id: itemDealId },
+      data: {
+        dealBaseMenuItemId: itemLowId,
+        dealBaseSizeId: null,
+        dealBaseSizeNameSnapshot: null,
+        dealStartsAt: new Date(Date.now() - 60 * 1000),
+        dealExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        dealLimitMode: "LIMITED",
+        dealLimitQty: dealLimitSmokeQty,
+        dealLimitLowThreshold: dealLimitSmokeLowThreshold,
+        isActive: true,
+      },
+    });
+    await prisma.upgradeItemLink.updateMany({
+      where: { upgradeOptionId: dealUpgrade.id },
+      data: {
+        linkedMenuItemId: itemLowId,
+        linkedSizeId: null,
+        itemNameSnapshot: `${runId} Low Stock Fries`,
+        sizeNameSnapshot: null,
+      },
+    });
+
+    const workspace = await newWorkspacePage({
+      browser,
+      token,
+      viewport: { width: 1440, height: 950 },
+    });
+    context = workspace.context;
+    page = workspace.page;
+
     let dialog = await openDealEditor();
     const optionSection = dialog.getByTestId("deal-editor-section-options");
     await expect(optionSection).toContainText("1 complete option");
@@ -2810,6 +2827,57 @@ async function assertWorkspaceDealLimitEditorContext(
     assert.match(prompt, /Discard unsaved deal changes/);
     await expect(dialog).toBeHidden();
 
+    const beforeHideVersion = await getOutletMenuVersion(prisma, outletAId);
+    dialog = await openDealEditor();
+    await expectLimitedDealState(dialog);
+    await expect(dialog.getByRole("button", { name: "Hide deal" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Hide deal" }).click();
+    await expect(dialog.getByRole("button", { name: "Show deal" })).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Save deal" }),
+    ).toBeEnabled();
+    await dialog.getByRole("button", { name: "Save deal" }).click();
+    await expect(dialog).toBeHidden({ timeout: 15_000 });
+    const afterSavedHide = await prisma.menuItem.findUnique({
+      where: { id: itemDealId },
+      select: { isActive: true },
+    });
+    assert.equal(
+      afterSavedHide?.isActive,
+      false,
+      "Workspace deal Hide deal should persist after Save deal.",
+    );
+    const afterHideVersion = await getOutletMenuVersion(prisma, outletAId);
+    assert(
+      afterHideVersion.revision > beforeHideVersion.revision,
+      "Workspace deal Hide deal save should bump kiosk menu freshness.",
+    );
+
+    dialog = await openDealEditor();
+    await expectLimitedDealState(dialog);
+    await expect(dialog.getByRole("button", { name: "Show deal" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Show deal" }).click();
+    await expect(dialog.getByRole("button", { name: "Hide deal" })).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Save deal" }),
+    ).toBeEnabled();
+    await dialog.getByRole("button", { name: "Save deal" }).click();
+    await expect(dialog).toBeHidden({ timeout: 15_000 });
+    const afterSavedShow = await prisma.menuItem.findUnique({
+      where: { id: itemDealId },
+      select: { isActive: true },
+    });
+    assert.equal(
+      afterSavedShow?.isActive,
+      true,
+      "Workspace deal Show deal should persist after Save deal.",
+    );
+    const afterShowVersion = await getOutletMenuVersion(prisma, outletAId);
+    assert(
+      afterShowVersion.revision > afterHideVersion.revision,
+      "Workspace deal Show deal save should bump kiosk menu freshness.",
+    );
+
     dialog = await openDealEditor();
     await expectLimitedDealState(dialog);
     await dialog.getByRole("button", { name: "Cancel" }).click();
@@ -2821,9 +2889,12 @@ async function assertWorkspaceDealLimitEditorContext(
         dealBaseMenuItemId: originalDealState.dealBaseMenuItemId,
         dealBaseSizeId: originalDealState.dealBaseSizeId,
         dealBaseSizeNameSnapshot: originalDealState.dealBaseSizeNameSnapshot,
+        dealStartsAt: originalDealState.dealStartsAt,
+        dealExpiresAt: originalDealState.dealExpiresAt,
         dealLimitMode: originalDealState.dealLimitMode,
         dealLimitQty: originalDealState.dealLimitQty,
         dealLimitLowThreshold: originalDealState.dealLimitLowThreshold,
+        isActive: originalDealState.isActive,
       },
     });
     await Promise.all(
@@ -2839,7 +2910,7 @@ async function assertWorkspaceDealLimitEditorContext(
         }),
       ),
     );
-    await context.close();
+    await context?.close();
   }
 }
 

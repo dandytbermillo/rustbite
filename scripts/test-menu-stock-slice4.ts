@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { NextRequest } from "next/server";
 import "dotenv/config";
 import { prisma } from "@/lib/db";
+import { DEAL_LIMIT_TARGET_TYPE } from "@/lib/deal-selling-limits";
 import { DEVICE_SESSION_COOKIE, type DeviceRole } from "@/lib/device-auth";
 import { DEFAULT_SITE_ID } from "@/lib/outlets";
 import { getOutletMenuVersion } from "@/lib/outlet-menu-sync";
@@ -413,6 +414,9 @@ async function assertDealStockRequirementsAndDecrement() {
       isOutOfStock: false,
       stockMode: "MANUAL",
       stockQty: null,
+      dealLimitMode: "LIMITED",
+      dealLimitQty: 6,
+      dealLimitLowThreshold: 2,
       sortOrder: 12,
     },
   });
@@ -541,7 +545,12 @@ async function assertDealStockRequirementsAndDecrement() {
     }),
     prisma.menuItem.findUniqueOrThrow({
       where: { id: deal.id },
-      select: { stockMode: true, stockQty: true },
+      select: {
+        stockMode: true,
+        stockQty: true,
+        dealLimitMode: true,
+        dealLimitQty: true,
+      },
     }),
   ]);
   assert.equal(baseAfter.stockQty, 2, "Deal base stock should decrement by qty.");
@@ -557,15 +566,31 @@ async function assertDealStockRequirementsAndDecrement() {
   );
   assert.equal(dealAfter.stockMode, "MANUAL");
   assert.equal(dealAfter.stockQty, null, "Deal shell stock should not be decremented.");
-
-  const movementByItem = new Map(
-    (
-      await prisma.stockMovement.findMany({
-        where: { orderId: body.id },
-      })
-    ).map((movement) => [movement.menuItemId, movement])
+  assert.equal(dealAfter.dealLimitMode, "LIMITED");
+  assert.equal(
+    dealAfter.dealLimitQty,
+    4,
+    "Limited deal counter should decrement by line qty."
   );
-  assert.equal(movementByItem.size, 2, "Expected two deal order stock movements.");
+
+  const movements = await prisma.stockMovement.findMany({
+    where: { orderId: body.id },
+  });
+  const stockMovements = movements.filter(
+    (movement) => movement.targetType === "MENU_ITEM"
+  );
+  const dealLimitMovements = movements.filter(
+    (movement) => movement.targetType === DEAL_LIMIT_TARGET_TYPE
+  );
+  const movementByItem = new Map(
+    stockMovements.map((movement) => [movement.menuItemId, movement])
+  );
+  assert.equal(stockMovements.length, 2, "Expected two deal order stock movements.");
+  assert.equal(
+    dealLimitMovements.length,
+    1,
+    "Expected one limited deal order stock movement."
+  );
   for (const menuItemId of [base.id, included.id]) {
     const movement = movementByItem.get(menuItemId);
     assert.ok(movement, `Missing stock movement for ${menuItemId}.`);
@@ -576,12 +601,25 @@ async function assertDealStockRequirementsAndDecrement() {
       `order:${body.id}:placed:MENU_ITEM:${menuItemId}`
     );
   }
+  const dealLimitMovement = dealLimitMovements[0];
+  assert.ok(dealLimitMovement, "Missing deal limit stock movement.");
+  assert.equal(dealLimitMovement.menuItemId, deal.id);
+  assert.equal(dealLimitMovement.targetIdSnapshot, deal.id);
+  assert.equal(dealLimitMovement.targetNameSnapshot, deal.name);
+  assert.equal(dealLimitMovement.delta, -2);
+  assert.equal(dealLimitMovement.beforeQty, 6);
+  assert.equal(dealLimitMovement.afterQty, 4);
+  assert.equal(dealLimitMovement.reason, "ORDER_PLACED");
+  assert.equal(
+    dealLimitMovement.idempotencyKey,
+    `order:${body.id}:placed:${DEAL_LIMIT_TARGET_TYPE}:${deal.id}`
+  );
 
   const afterVersion = await getOutletMenuVersion(prisma, outletId);
   assert.equal(
     afterVersion.revision,
-    beforeVersion.revision + 1,
-    "Accepted deal stock decrement should bump menu version once."
+    beforeVersion.revision + 2,
+    "Accepted deal component and limit decrements should both bump menu version."
   );
 }
 
