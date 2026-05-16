@@ -1,0 +1,111 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Archivo+Black&family=JetBrains+Mono:wght@500;700;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { font-family: 'Archivo', 'Inter', system-ui, sans-serif; }
+
+.display { font-family: 'Archivo Black', 'Archivo', sans-serif; font-weight: 900; letter-spacing: -0.02em; line-height: 0.95; }
+.mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse-big { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+@keyframes float-slow { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-15px) rotate(5deg); } }
+@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+@keyframes wiggle { 0%,100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+@keyframes ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes flash-in { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255,190,11,0.7); } 50% { box-shadow: 0 0 0 24px rgba(255,190,11,0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,190,11,0); } }
+@keyframes pulse-ready { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.03); opacity: 0.9; } }
+@keyframes live-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
+
+:root { --nav-h: 56px; }
+.scroll-anchor { scroll-margin-top: var(--nav-h); }
+
+.fade-up { animation: fadeUp 0.45s cubic-bezier(0.16,1,0.3,1) both; }
+.pulse-big { animation: pulse-big 2s ease-in-out infinite; }
+.float-slow { animation: float-slow 6s ease-in-out infinite; }
+.wiggle { animation: wiggle 3s ease-in-out infinite; }
+.ticker { animation: ticker 30s linear infinite; }
+.flash-in { animation: flash-in 0.9s ease-out both; }
+.pulse-ready { animation: pulse-ready 1.6s ease-in-out infinite; }
+.live-dot { display: inline-block; width: 0.4rem; height: 0.4rem; border-radius: 9999px; background: #22C55E; animation: live-pulse 2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; opacity: 1; transform: none; } }
+
+.btn-press:active { transform: translateY(2px) scale(0.98); }
+.food-shadow { filter: drop-shadow(0 15px 25px rgba(0,0,0,0.25)); }
+.noise-bg { background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E"); }
+.tile-hover { transition: all 0.2s; }
+.tile-hover:hover { transform: translateY(-4px); box-shadow: 0 20px 40px -10px rgba(0,0,0,0.25); }
+
+/* Accessibility: large-text toggle — scales body text up */
+html.text-lg-boost { font-size: 20px; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ====================================================================
+   Admin Workspace canvas — pan-mode rules only.
+   The canvas is locked (overflow-hidden) when pan is OFF, and unlocked
+   (overflow-auto + no-scrollbar) when pan is ON. See toggle in
+   AdminWorkspaceCanvas.tsx scroll container className.
+   Scrollbars are intentionally hidden via the existing .no-scrollbar
+   utility — they were getting visually obscured by widget z-index
+   stacking, so pan + wheel are the canonical navigation paths.
+   ==================================================================== */
+
+/* Pan mode: widgets are non-interactive (pointer-events: none on direct
+   children) so drag-anywhere pans the canvas. Wheel/trackpad scroll on
+   the canvas STILL works in pan mode — overflow-scroll on the canvas
+   handles it natively, giving the user two ways to navigate (drag OR
+   scroll) while pan is on.
+   Two layers of widget-pointer-events safety:
+   1. Direct child combinator on widgets — only widgets that are direct
+      children of the canvas get pointer-events: none. Modals nested
+      deeper inside widgets are unaffected by inheritance through this
+      rule.
+   2. Explicit pointer-events: auto override for any role=dialog
+      [aria-modal=true] descendant — defense in depth.
+   user-select: none prevents text selection during drag. touch-action is
+   intentionally NOT set to "none" — that would block wheel scroll on
+   some Chromium versions and disable native two-finger touch panning. */
+.admin-workspace-pan-mode {
+  user-select: none;
+}
+.admin-workspace-pan-mode [data-testid="admin-workspace-canvas"] > [data-testid^="admin-workspace-widget-"] {
+  pointer-events: none;
+}
+.admin-workspace-pan-mode [role="dialog"][aria-modal="true"] {
+  pointer-events: auto;
+}
+
+/* Widget interiors — same always-visible-when-overflowing pattern as the
+   canvas, but lighter palette to suit white widget backgrounds. Applies
+   to overflow-auto containers; the bar appears ONLY when content is
+   actually scrollable (so widgets that fit their content are unchanged).
+   Defining ::-webkit-scrollbar styling overrides macOS auto-fade so the
+   bar stays visible while content overflows, signaling "more below." */
+.admin-widget-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.admin-widget-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+}
+.admin-widget-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.admin-widget-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.36);
+  background-clip: padding-box;
+}
+.admin-widget-scroll::-webkit-scrollbar-corner {
+  background: rgba(0, 0, 0, 0.04);
+}
+.admin-widget-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.26) rgba(0, 0, 0, 0.04);
+}

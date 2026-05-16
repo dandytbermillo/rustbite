@@ -1,0 +1,869 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StockMode {
+  MANUAL
+  QUANTITY
+}
+
+enum DealLimitMode {
+  UNLIMITED
+  LIMITED
+}
+
+enum StockMovementTargetType {
+  MENU_ITEM
+  ITEM_LOCAL_ADDON
+  SHARED_MODIFIER_OPTION
+  DEAL_LIMIT
+}
+
+enum ModifierSelectionMode {
+  OPTIONAL_MULTI
+  REQUIRED_SINGLE
+  OPTIONAL_SINGLE
+  REQUIRED_MULTI
+}
+
+enum ModifierContractMode {
+  LEGACY
+  SHARED
+  MIXED_COMPAT
+}
+
+model Site {
+  id          String         @id @default(cuid())
+  name        String
+  timezone    String         @default("America/Edmonton")
+  outlets     Outlet[]
+  appSettings AppSettings[]
+  auditLogs   AuthAuditLog[]
+  devices     Device[]
+  revisions   MenuRevision[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model Outlet {
+  id                                     String                                   @id @default(cuid())
+  siteId                                 String
+  site                                   Site                                     @relation(fields: [siteId], references: [id])
+  name                                   String
+  slug                                   String
+  orderPrefix                            String
+  isActive                               Boolean                                  @default(true)
+  categories                             Category[]
+  menuItems                              MenuItem[]
+  orders                                 Order[]
+  paymentTransactions                    PaymentTransaction[]
+  menuAuditLogs                          MenuAuditLog[]
+  menuRevisions                          MenuRevision[]
+  menuHistoryStates                      MenuHistoryState[]
+  menuVersion                            OutletMenuVersion?
+  orderVersion                           OutletOrderVersion?
+  outletSettings                         OutletSettings?
+  stockMovements                         StockMovement[]
+  sharedModifierGroups                   SharedModifierGroup[]
+  menuItemModifierGroups                 MenuItemModifierGroup[]
+  menuItemModifierGroupAttachmentHistory MenuItemModifierGroupAttachmentHistory[]
+  adminRoles                             AdminUserOutletRole[]
+  devices                                Device[]
+  deviceOutletAccess                     DeviceOutletAccess[]
+  authAuditLogs                          AuthAuditLog[]
+  dailyOrderSequences                    OutletDailyOrderSequence[]
+  createdAt                              DateTime                                 @default(now())
+  updatedAt                              DateTime                                 @updatedAt
+
+  @@unique([siteId, slug])
+  @@unique([siteId, orderPrefix])
+  @@index([siteId])
+  @@index([isActive])
+}
+
+model OutletSettings {
+  id                     String   @id @default(cuid())
+  outletId               String   @unique
+  outlet                 Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  dealDefaultDiscountPct Decimal? @db.Decimal(5, 2)
+  menuDisplayName        String?
+  paymentConfigJson      Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model OutletMenuVersion {
+  outletId  String   @id
+  outlet    Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  revision  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OutletOrderVersion {
+  outletId  String   @id
+  outlet    Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  revision  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Category {
+  id        String     @id @default(cuid())
+  outletId  String     @default("cafeteria")
+  outlet    Outlet     @relation(fields: [outletId], references: [id])
+  slug      String
+  name      String
+  icon      String
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  items     MenuItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([outletId, slug])
+  @@index([outletId])
+}
+
+model MenuItem {
+  id                             String                                   @id @default(cuid())
+  categoryId                     String
+  category                       Category                                 @relation(fields: [categoryId], references: [id])
+  outletId                       String                                   @default("cafeteria")
+  outlet                         Outlet                                   @relation(fields: [outletId], references: [id])
+  comboNum                       Int?
+  name                           String
+  description                    String
+  price                          Decimal                                  @db.Decimal(8, 2)
+  emoji                          String
+  imageUrl                       String?
+  imageAlt                       String?
+  imageFit                       String                                   @default("COVER")
+  cardImageUrl                   String?
+  cardImageAlt                   String?
+  bgColor                        String                                   @default("#FFE3B3")
+  badge                          String?
+  mealUpgrade                    Decimal?                                 @db.Decimal(8, 2)
+  mealSavings                    Decimal?                                 @db.Decimal(8, 2)
+  bundleSavings                  Decimal?                                 @db.Decimal(8, 2)
+  dealBaseMenuItemId             String?
+  dealBaseMenuItem               MenuItem?                                @relation("DealBaseMenuItem", fields: [dealBaseMenuItemId], references: [id], onDelete: SetNull)
+  dealBaseSizeId                 String?
+  dealBaseSize                   SizeOption?                              @relation("DealBaseSizeOption", fields: [dealBaseSizeId], references: [id], onDelete: SetNull)
+  dealBaseSizeNameSnapshot       String?
+  dealStartsAt                   DateTime?
+  dealExpiresAt                  DateTime?
+  dealLimitMode                  DealLimitMode                            @default(UNLIMITED)
+  dealLimitQty                   Int?
+  dealLimitLowThreshold          Int?
+  dealLimitUpdatedAt             DateTime?
+  dealLimitUpdatedById           String?
+  dealLimitUpdatedBy             AdminUser?                               @relation("MenuItemDealLimitUpdatedBy", fields: [dealLimitUpdatedById], references: [id], onDelete: SetNull)
+  isActive                       Boolean                                  @default(true)
+  isOutOfStock                   Boolean                                  @default(false)
+  modifierContractMode           ModifierContractMode                     @default(LEGACY)
+  stockMode                      StockMode                                @default(MANUAL)
+  stockQty                       Int?
+  lowStockThreshold              Int?
+  stockUpdatedAt                 DateTime?
+  stockUpdatedById               String?
+  stockUpdatedBy                 AdminUser?                               @relation("MenuItemStockUpdatedBy", fields: [stockUpdatedById], references: [id], onDelete: SetNull)
+  sortOrder                      Int                                      @default(0)
+  sizes                          SizeOption[]
+  addons                         AddonOption[]
+  modifierGroupLinks             MenuItemModifierGroup[]
+  modifierGroupAttachmentHistory MenuItemModifierGroupAttachmentHistory[]
+  upgradeOptions                 UpgradeOption[]
+  upgradeItemLinks               UpgradeItemLink[]
+  derivedDealMenuItems           MenuItem[]                               @relation("DealBaseMenuItem")
+  orderItems                     OrderItem[]
+  stockMovements                 StockMovement[]
+  lockVersion                    Int                                      @default(0)
+  createdAt                      DateTime                                 @default(now())
+  updatedAt                      DateTime                                 @updatedAt
+
+  @@index([categoryId])
+  @@index([outletId])
+  @@index([outletId, dealStartsAt, dealExpiresAt])
+  @@index([dealBaseMenuItemId])
+  @@index([dealBaseSizeId])
+  @@index([dealLimitMode])
+  @@index([dealLimitUpdatedById])
+  @@index([stockMode])
+  @@index([stockUpdatedById])
+}
+
+model SizeOption {
+  id               String            @id @default(cuid())
+  itemId           String
+  item             MenuItem          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name             String
+  priceDelta       Decimal           @db.Decimal(8, 2)
+  sortOrder        Int               @default(0)
+  upgradeItemLinks UpgradeItemLink[]
+  dealBaseMenuItems MenuItem[]        @relation("DealBaseSizeOption")
+
+  @@index([itemId])
+}
+
+model AddonOption {
+  id                String          @id @default(cuid())
+  itemId            String
+  item              MenuItem        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name              String
+  priceDelta        Decimal         @default(0) @db.Decimal(8, 2)
+  stockMode         StockMode       @default(MANUAL)
+  isOutOfStock      Boolean         @default(false)
+  stockQty          Int?
+  lowStockThreshold Int?
+  stockUpdatedAt    DateTime?
+  stockUpdatedById  String?
+  stockUpdatedBy    AdminUser?      @relation("AddonOptionStockUpdatedBy", fields: [stockUpdatedById], references: [id], onDelete: SetNull)
+  stockMovements    StockMovement[]
+  sortOrder         Int             @default(0)
+
+  @@index([itemId])
+  @@index([stockMode])
+  @@index([stockUpdatedById])
+}
+
+model SharedModifierGroup {
+  id                String                                   @id @default(cuid())
+  outletId          String
+  outlet            Outlet                                   @relation(fields: [outletId], references: [id])
+  name              String
+  description       String?
+  selectionMode     ModifierSelectionMode                    @default(OPTIONAL_MULTI)
+  minSelect         Int                                      @default(0)
+  maxSelect         Int?
+  isActive          Boolean                                  @default(true)
+  sortOrder         Int                                      @default(0)
+  lockVersion       Int                                      @default(0)
+  options           SharedModifierOption[]
+  itemLinks         MenuItemModifierGroup[]
+  attachmentHistory MenuItemModifierGroupAttachmentHistory[]
+  createdAt         DateTime                                 @default(now())
+  updatedAt         DateTime                                 @updatedAt
+
+  @@index([outletId])
+  @@index([isActive])
+}
+
+model SharedModifierOption {
+  id                String                           @id @default(cuid())
+  groupId           String
+  group             SharedModifierGroup              @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name              String
+  priceDelta        Decimal                          @default(0) @db.Decimal(8, 2)
+  isActive          Boolean                          @default(true)
+  stockMode         StockMode                        @default(MANUAL)
+  isOutOfStock      Boolean                          @default(false)
+  stockQty          Int?
+  lowStockThreshold Int?
+  stockUpdatedAt    DateTime?
+  stockUpdatedById  String?
+  stockUpdatedBy    AdminUser?                       @relation("SharedModifierOptionStockUpdatedBy", fields: [stockUpdatedById], references: [id], onDelete: SetNull)
+  stockMovements    StockMovement[]
+  sortOrder         Int                              @default(0)
+  itemOverrides     MenuItemModifierOptionOverride[]
+  createdAt         DateTime                         @default(now())
+  updatedAt         DateTime                         @updatedAt
+
+  @@index([groupId])
+  @@index([isActive])
+  @@index([stockMode])
+  @@index([stockUpdatedById])
+}
+
+model MenuItemModifierGroup {
+  id                String                           @id @default(cuid())
+  outletId          String
+  outlet            Outlet                           @relation(fields: [outletId], references: [id])
+  menuItemId        String
+  menuItem          MenuItem                         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  modifierGroupId   String
+  modifierGroup     SharedModifierGroup              @relation(fields: [modifierGroupId], references: [id])
+  sortOrder         Int                              @default(0)
+  minSelectOverride Int?
+  maxSelectOverride Int?
+  isActive          Boolean                          @default(true)
+  optionOverrides   MenuItemModifierOptionOverride[]
+  createdAt         DateTime                         @default(now())
+  updatedAt         DateTime                         @updatedAt
+
+  @@unique([menuItemId, modifierGroupId])
+  @@index([outletId])
+  @@index([menuItemId])
+  @@index([modifierGroupId])
+  @@index([isActive])
+}
+
+model MenuItemModifierGroupAttachmentHistory {
+  id                        String              @id @default(cuid())
+  outletId                  String
+  outlet                    Outlet              @relation(fields: [outletId], references: [id])
+  menuItemId                String?
+  menuItem                  MenuItem?           @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  menuItemIdSnapshot        String
+  menuItemNameSnapshot      String
+  modifierGroupId           String
+  modifierGroup             SharedModifierGroup @relation(fields: [modifierGroupId], references: [id])
+  modifierGroupNameSnapshot String
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+
+  @@unique([menuItemIdSnapshot, modifierGroupId], map: "MenuItemModifierGroupAttachmentHistory_menuItem_group_key")
+  @@index([outletId])
+  @@index([menuItemId])
+  @@index([modifierGroupId])
+}
+
+model MenuItemModifierOptionOverride {
+  id                      String                @id @default(cuid())
+  menuItemModifierGroupId String
+  itemModifierGroup       MenuItemModifierGroup @relation(fields: [menuItemModifierGroupId], references: [id], onDelete: Cascade)
+  modifierOptionId        String
+  modifierOption          SharedModifierOption  @relation(fields: [modifierOptionId], references: [id])
+  isHidden                Boolean               @default(false)
+  priceDeltaOverride      Decimal?              @db.Decimal(8, 2)
+  sortOrderOverride       Int?
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+
+  @@unique([menuItemModifierGroupId, modifierOptionId])
+  @@index([modifierOptionId])
+}
+
+model UpgradeOption {
+  id           String            @id @default(cuid())
+  itemId       String
+  item         MenuItem          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  customTitle  String?
+  extraCharge  Decimal           @db.Decimal(8, 2)
+  savingsLabel Decimal?          @db.Decimal(8, 2)
+  // Operator's intent in % (0-100). When set, extraCharge and savingsLabel are
+  // recomputed live at hydration / checkout from the current renderable linked
+  // items. When null, extraCharge is the canonical (manually-set) amount and
+  // no live recompute happens. Persisted columns above still hold the most
+  // recent computed values for snapshots, history, and as a fallback.
+  discountPct  Decimal?          @db.Decimal(5, 2)
+  sortOrder    Int               @default(0)
+  linkedItems  UpgradeItemLink[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([itemId])
+}
+
+model UpgradeItemLink {
+  id               String        @id @default(cuid())
+  upgradeOptionId  String
+  upgradeOption    UpgradeOption @relation(fields: [upgradeOptionId], references: [id], onDelete: Cascade)
+  linkedMenuItemId String?
+  linkedMenuItem   MenuItem?     @relation(fields: [linkedMenuItemId], references: [id], onDelete: SetNull)
+  linkedSizeId     String?
+  linkedSize       SizeOption?   @relation(fields: [linkedSizeId], references: [id], onDelete: SetNull)
+  itemNameSnapshot String?
+  sizeNameSnapshot String?
+  sortOrder        Int           @default(0)
+
+  @@index([upgradeOptionId])
+  @@index([linkedMenuItemId])
+  @@index([linkedSizeId])
+}
+
+model Order {
+  id                  String              @id @default(cuid())
+  orderNumber         String
+  outletId            String              @default("cafeteria")
+  outlet              Outlet              @relation(fields: [outletId], references: [id])
+  businessDate        DateTime?
+  sequenceNumber      Int?
+  displayOrderNumber  String?
+  kioskId             String
+  orderType           String
+  status              String              @default("PENDING")
+  subtotal            Decimal             @db.Decimal(10, 2)
+  gst                 Decimal             @db.Decimal(10, 2)
+  total               Decimal             @db.Decimal(10, 2)
+  paymentMethod       String?
+  paymentProvider     String?
+  paymentStatus       String?
+  productionStartedAt DateTime?
+  items               OrderItem[]
+  paymentTransaction  PaymentTransaction?
+  stockMovements      StockMovement[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@unique([outletId, businessDate, sequenceNumber])
+  @@index([status])
+  @@index([productionStartedAt])
+  @@index([createdAt])
+  @@index([outletId])
+}
+
+model OrderItem {
+  id                     String   @id @default(cuid())
+  orderId                String
+  order                  Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId             String
+  menuItem               MenuItem @relation(fields: [menuItemId], references: [id])
+  nameSnapshot           String
+  qty                    Int
+  sizeName               String?
+  sizePriceDelta         Decimal? @db.Decimal(8, 2)
+  addonsJson             Json
+  addOnSetSelectionsJson Json?
+  isMeal                 Boolean  @default(false)
+  mealUpgrade            Decimal? @db.Decimal(8, 2)
+  upgradeSnapshotJson    Json?
+  lineTotal              Decimal  @db.Decimal(10, 2)
+
+  @@index([orderId])
+  @@index([menuItemId])
+}
+
+model PaymentTransaction {
+  id                      String    @id @default(cuid())
+  orderId                 String?   @unique
+  order                   Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  outletId                String    @default("cafeteria")
+  outlet                  Outlet    @relation(fields: [outletId], references: [id])
+  kioskId                 String
+  orderType               String
+  paymentMethod           String
+  provider                String
+  status                  String
+  currency                String
+  subtotal                Decimal   @db.Decimal(10, 2)
+  gst                     Decimal   @db.Decimal(10, 2)
+  total                   Decimal   @db.Decimal(10, 2)
+  cartSnapshot            Json
+  stockRequirementsJson   Json?
+  providerPaymentIntentId String?   @unique
+  providerReaderId        String?
+  providerReference       String?
+  failureCode             String?
+  failureMessage          String?
+  finalizedAt             DateTime?
+  finalizedOrderId        String?   @unique
+  refundState             String    @default("NONE")
+  refundIdempotencyKey    String?   @unique
+  completedAt             DateTime?
+  lastSyncedAt            DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([outletId])
+}
+
+model MenuAuditLog {
+  id            String   @id @default(cuid())
+  actionType    String
+  targetType    String
+  targetId      String?
+  targetLabel   String?
+  actorType     String
+  actorIdentity String?
+  beforePayload Json?
+  afterPayload  Json?
+  outletId      String   @default("cafeteria")
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+  @@index([outletId])
+}
+
+model StockMovement {
+  id                     String                  @id @default(cuid())
+  outletId               String
+  outlet                 Outlet                  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  targetType             StockMovementTargetType @default(MENU_ITEM)
+  targetIdSnapshot       String?
+  targetNameSnapshot     String?
+  menuItemId             String?
+  menuItem               MenuItem?               @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  addonOptionId          String?
+  addonOption            AddonOption?            @relation(fields: [addonOptionId], references: [id], onDelete: SetNull)
+  sharedModifierOptionId String?
+  sharedModifierOption   SharedModifierOption?   @relation(fields: [sharedModifierOptionId], references: [id], onDelete: SetNull)
+  itemNameSnapshot       String
+  orderId                String?
+  order                  Order?                  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  delta                  Int
+  reason                 String
+  idempotencyKey         String?                 @unique
+  beforeQty              Int?
+  afterQty               Int?
+  actorType              String
+  actorId                String?
+  note                   String?
+  createdAt              DateTime                @default(now())
+
+  @@index([outletId, createdAt])
+  @@index([targetType, targetIdSnapshot, createdAt])
+  @@index([targetType, createdAt])
+  @@index([menuItemId, createdAt])
+  @@index([addonOptionId, createdAt])
+  @@index([sharedModifierOptionId, createdAt])
+  @@index([orderId])
+}
+
+model MenuRevision {
+  id               String             @id @default(cuid())
+  siteId           String             @default("site")
+  site             Site               @relation(fields: [siteId], references: [id])
+  outletId         String             @default("cafeteria")
+  outlet           Outlet             @relation(fields: [outletId], references: [id])
+  reason           String
+  targetType       String?
+  targetId         String?
+  targetLabel      String?
+  actorType        String
+  actorIdentity    String?
+  snapshot         Json
+  sourceRevisionId String?
+  createdAt        DateTime           @default(now())
+  currentInStates  MenuHistoryState[] @relation("CurrentMenuRevision")
+
+  @@index([createdAt])
+  @@index([siteId])
+  @@index([outletId])
+  @@index([sourceRevisionId])
+  @@index([targetType, targetId])
+}
+
+model MenuHistoryState {
+  id                String        @id
+  outletId          String        @default("cafeteria")
+  outlet            Outlet        @relation(fields: [outletId], references: [id])
+  currentRevisionId String?
+  currentRevision   MenuRevision? @relation("CurrentMenuRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@unique([outletId])
+  @@index([currentRevisionId])
+}
+
+model AppSettings {
+  id                     String   @id @default("singleton")
+  siteId                 String   @default("site")
+  site                   Site     @relation(fields: [siteId], references: [id])
+  storeName              String   @default("Rushbite")
+  storeLocation          String   @default("")
+  gstRate                Decimal  @default(0.05) @db.Decimal(5, 4)
+  dealDefaultDiscountPct Decimal? @db.Decimal(5, 2)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([siteId])
+}
+
+model OutletDailyOrderSequence {
+  id           String   @id @default(cuid())
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  businessDate DateTime
+  nextSequence Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([outletId, businessDate])
+}
+
+model AdminUser {
+  id                                String                    @id @default(cuid())
+  email                             String                    @unique
+  displayName                       String
+  passwordHash                      String
+  accountType                       String
+  siteRole                          String?
+  mfaSecretCiphertext               String?
+  mfaEnabledAt                      DateTime?
+  operationalPinHash                String?
+  operationalPinChangedAt           DateTime?
+  isActive                          Boolean                   @default(true)
+  lastLoginAt                       DateTime?
+  passwordChangedAt                 DateTime?
+  sessions                          AdminSession[]
+  mfaLoginChallenges                AdminMfaLoginChallenge[]
+  mfaRecoveryCodes                  AdminMfaRecoveryCode[]
+  passwordResetTokens               AdminPasswordResetToken[]
+  outletRoles                       AdminUserOutletRole[]
+  surfaceAccess                     AdminUserSurfaceAccess[]
+  activeDeviceSessions              DeviceSession[]           @relation("DeviceSessionActiveStaff")
+  stockUpdatedMenuItems             MenuItem[]                @relation("MenuItemStockUpdatedBy")
+  dealLimitUpdatedMenuItems         MenuItem[]                @relation("MenuItemDealLimitUpdatedBy")
+  stockUpdatedAddonOptions          AddonOption[]             @relation("AddonOptionStockUpdatedBy")
+  stockUpdatedSharedModifierOptions SharedModifierOption[]    @relation("SharedModifierOptionStockUpdatedBy")
+  createdAt                         DateTime                  @default(now())
+  updatedAt                         DateTime                  @updatedAt
+
+  @@index([accountType])
+  @@index([siteRole])
+  @@index([isActive])
+}
+
+model AdminUserSurfaceAccess {
+  id        String    @id @default(cuid())
+  userId    String
+  user      AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  surface   String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([userId, surface])
+  @@index([surface])
+}
+
+model AdminUserOutletRole {
+  id        String    @id @default(cuid())
+  userId    String
+  user      AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outletId  String
+  outlet    Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  role      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([userId, outletId])
+  @@index([outletId, role])
+}
+
+model AdminSession {
+  id               String    @id @default(cuid())
+  userId           String
+  user             AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash        String    @unique
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime
+  lastSeenAt       DateTime  @default(now())
+  stepUpVerifiedAt DateTime?
+  stepUpExpiresAt  DateTime?
+  revokedAt        DateTime?
+  userAgent        String?
+  ipHash           String?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+model AdminMfaLoginChallenge {
+  id         String    @id @default(cuid())
+  userId     String
+  user       AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  userAgent  String?
+  ipHash     String?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([consumedAt])
+}
+
+model AdminMfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String    @unique
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+
+  @@index([userId])
+  @@index([usedAt])
+}
+
+model AdminPasswordResetToken {
+  id              String    @id @default(cuid())
+  userId          String
+  user            AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash       String    @unique
+  createdAt       DateTime  @default(now())
+  expiresAt       DateTime
+  usedAt          DateTime?
+  requestedIpHash String?
+  userAgent       String?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([usedAt])
+}
+
+model PendingOwnerChange {
+  id           String                          @id @default(cuid())
+  actorId      String
+  targetId     String
+  action       String
+  status       String                          @default("PENDING")
+  reason       String?
+  metadata     Json?
+  cancelTokens PendingOwnerChangeCancelToken[]
+  requestedAt  DateTime                        @default(now())
+  executesAt   DateTime
+  cancelledAt  DateTime?
+  cancelledBy  String?
+  executedAt   DateTime?
+  createdAt    DateTime                        @default(now())
+  updatedAt    DateTime                        @updatedAt
+
+  @@index([actorId])
+  @@index([targetId])
+  @@index([status, executesAt])
+}
+
+model PendingOwnerChangeCancelToken {
+  id                   String             @id @default(cuid())
+  pendingOwnerChangeId String
+  pendingOwnerChange   PendingOwnerChange @relation(fields: [pendingOwnerChangeId], references: [id], onDelete: Cascade)
+  ownerUserId          String
+  tokenHash            String             @unique
+  createdAt            DateTime           @default(now())
+  expiresAt            DateTime
+  usedAt               DateTime?
+
+  @@index([pendingOwnerChangeId])
+  @@index([ownerUserId])
+  @@index([expiresAt])
+  @@index([usedAt])
+}
+
+model AuthEmailOutbox {
+  id              String    @id @default(cuid())
+  eventType       String
+  recipientUserId String?
+  recipientEmail  String
+  subject         String
+  textBody        String
+  metadata        Json?
+  status          String    @default("PENDING")
+  attempts        Int       @default(0)
+  nextAttemptAt   DateTime?
+  sentAt          DateTime?
+  failedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([recipientUserId])
+  @@index([eventType])
+}
+
+model Device {
+  id                    String               @id @default(cuid())
+  siteId                String               @default("site")
+  site                  Site                 @relation(fields: [siteId], references: [id])
+  outletId              String?
+  outlet                Outlet?              @relation(fields: [outletId], references: [id])
+  name                  String
+  physicalLocation      String?
+  role                  String
+  isSharedAcrossOutlets Boolean              @default(false)
+  secretHash            String
+  isActive              Boolean              @default(true)
+  lastSeenAt            DateTime?
+  lastIpHash            String?
+  lastUserAgent         String?
+  rotatedAt             DateTime?
+  sessions              DeviceSession[]
+  outletAccess          DeviceOutletAccess[]
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([siteId])
+  @@index([outletId])
+  @@index([role])
+  @@index([isActive])
+}
+
+model DeviceOutletAccess {
+  id        String   @id @default(cuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([deviceId, outletId])
+  @@index([outletId])
+}
+
+model DeviceSession {
+  id         String    @id @default(cuid())
+  deviceId   String
+  device     Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  userAgent  String?
+  ipHash     String?
+
+  activeOutletId          String?
+  activeStaffUserId       String?
+  activeStaffUser         AdminUser? @relation("DeviceSessionActiveStaff", fields: [activeStaffUserId], references: [id], onDelete: SetNull)
+  activeStaffOutletId     String?
+  activeStaffRole         String?
+  activeStaffVerifiedAt   DateTime?
+  activeStaffLastActionAt DateTime?
+
+  @@index([deviceId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@index([activeOutletId])
+  @@index([activeStaffUserId])
+  @@index([activeStaffOutletId])
+}
+
+model AuthAuditLog {
+  id          String   @id @default(cuid())
+  eventType   String
+  actorType   String
+  actorId     String?
+  actorLabel  String?
+  targetType  String?
+  targetId    String?
+  targetLabel String?
+  siteId      String   @default("site")
+  site        Site     @relation(fields: [siteId], references: [id])
+  outletId    String?
+  outlet      Outlet?  @relation(fields: [outletId], references: [id])
+  ipHash      String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([eventType])
+  @@index([actorType, actorId])
+  @@index([targetType, targetId])
+}
+
+model LoginAttempt {
+  id             String   @id @default(cuid())
+  subjectType    String
+  subjectKeyHash String
+  ipHash         String?
+  attemptedAt    DateTime @default(now())
+  succeeded      Boolean  @default(false)
+  metadata       Json?
+
+  @@index([subjectType, subjectKeyHash, attemptedAt])
+  @@index([ipHash, attemptedAt])
+}

@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rushbite-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rushbite
+      POSTGRES_PASSWORD: rushbite_dev
+      POSTGRES_DB: rushbite
+    ports:
+      - "5433:5432"
+    volumes:
+      - rushbite_pgdata:/var/lib/postgresql/data
+volumes:
+  rushbite_pgdata:

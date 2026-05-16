@@ -1,0 +1,1 @@
+ALTER TABLE "MenuItem" ADD COLUMN "isOutOfStock" BOOLEAN NOT NULL DEFAULT false;
