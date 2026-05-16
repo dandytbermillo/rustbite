@@ -455,6 +455,7 @@ model PaymentTransaction {
   finalizedOrderId        String?   @unique
   refundState             String    @default("NONE")
   refundIdempotencyKey    String?   @unique
+  syncRevision            Int       @default(0)
   completedAt             DateTime?
   lastSyncedAt            DateTime?
   createdAt               DateTime  @default(now())
@@ -463,6 +464,42 @@ model PaymentTransaction {
   @@index([status])
   @@index([createdAt])
   @@index([outletId])
+}
+
+model SyncOutbox {
+  id                   String   @id @default(cuid())
+  eventType            String
+  entityType           String
+  entityId             String
+  outletId             String?
+  idempotencyKey       String   @unique
+  payload              Json
+  payloadSchemaVersion Int      @default(1)
+  supabaseTargetTable  String?
+  sourceRevision       Int?
+  sourceUpdatedAt      DateTime?
+  payloadHash          String?
+  clientType           String?
+  deviceId             String?
+  requestId            String?
+  status               String   @default("PENDING")
+  attempts             Int      @default(0)
+  claimedAt            DateTime?
+  leaseExpiresAt       DateTime?
+  claimedBy            String?
+  nextAttemptAt        DateTime?
+  lastError            String?
+  sentAt               DateTime?
+  failedAt             DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
+  @@index([eventType])
+  @@index([entityType, entityId])
+  @@index([outletId])
+  @@index([createdAt])
 }
 
 model MenuAuditLog {

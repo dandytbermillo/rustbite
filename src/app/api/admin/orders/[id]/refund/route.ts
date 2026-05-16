@@ -7,6 +7,10 @@ import { bumpOutletOrderVersion } from "@/lib/outlet-order-sync";
 import { canRefundPaymentStatus } from "@/lib/payments";
 import { refundStripePaymentIntent } from "@/lib/stripe-terminal";
 import type { PaymentTransactionStatus } from "@/lib/types";
+import {
+  createOrderSyncEvent,
+  updatePaymentTransactionWithSyncEvent,
+} from "@/lib/supabase-sync/outbox";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -68,8 +72,8 @@ export async function POST(
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.paymentTransaction.update({
-        where: { id: paymentTransaction.id },
+      await updatePaymentTransactionWithSyncEvent(tx, {
+        id: paymentTransaction.id,
         data: {
           status: "REFUNDED",
           ...(providerReference ? { providerReference } : {}),
@@ -77,15 +81,26 @@ export async function POST(
           failureMessage: null,
           lastSyncedAt: new Date(),
         },
+        context: { clientType: "admin" },
       });
-      await tx.order.update({
+      const updatedOrder = await tx.order.update({
         where: { id: order.id },
         data: {
           status: "REFUNDED",
           paymentStatus: "REFUNDED",
         },
+        include: { items: true, paymentTransaction: true },
       });
-      await bumpOutletOrderVersion(tx, order.outletId);
+      const version = await bumpOutletOrderVersion(tx, order.outletId);
+      await createOrderSyncEvent(tx, {
+        eventType: "order.status_updated",
+        order: updatedOrder,
+        idempotencyKey: `order:${updatedOrder.id}:status:${order.status}->REFUNDED:rev:${version.revision}`,
+        sourceRevision: version.revision,
+        previousStatus: order.status,
+        nextStatus: "REFUNDED",
+        context: { clientType: "admin" },
+      });
     });
 
     return NextResponse.json({ ok: true });

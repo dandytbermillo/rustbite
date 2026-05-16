@@ -5,6 +5,10 @@ import {
 } from "./menu-stock-movements";
 import { restockCancelledOrderDealLimits } from "./deal-selling-limits";
 import { bumpOutletOrderVersion } from "./outlet-order-sync";
+import {
+  createOrderSyncEvent,
+  updatePaymentTransactionWithSyncEvent,
+} from "./supabase-sync/outbox";
 import type { OrderStatus, PaymentTransactionStatus } from "./types";
 
 function getCounterPaymentStatusUpdate(
@@ -41,10 +45,11 @@ export async function updateOrderStatus(
           ? { outletId: { in: options.outletIds } }
           : {}),
       },
-      include: { paymentTransaction: true },
+      include: { items: true, paymentTransaction: true },
     });
 
     if (!existing) return null;
+    if (existing.status === status) return existing;
 
     const paymentStatus = getCounterPaymentStatusUpdate(
       existing.status,
@@ -54,8 +59,8 @@ export async function updateOrderStatus(
     const now = new Date();
 
     if (paymentStatus && existing.paymentTransaction) {
-      await tx.paymentTransaction.update({
-        where: { id: existing.paymentTransaction.id },
+      await updatePaymentTransactionWithSyncEvent(tx, {
+        id: existing.paymentTransaction.id,
         data: {
           status: paymentStatus,
           failureCode: null,
@@ -101,7 +106,15 @@ export async function updateOrderStatus(
       now,
     });
 
-    await bumpOutletOrderVersion(tx, existing.outletId);
+    const version = await bumpOutletOrderVersion(tx, existing.outletId);
+    await createOrderSyncEvent(tx, {
+      eventType: "order.status_updated",
+      order: updated,
+      idempotencyKey: `order:${updated.id}:status:${existing.status}->${status}:rev:${version.revision}`,
+      sourceRevision: version.revision,
+      previousStatus: existing.status,
+      nextStatus: status,
+    });
 
     return updated;
   });

@@ -146,6 +146,17 @@ async function createHistoricalDuplicateDisplayNumber() {
 }
 
 async function cleanup() {
+  const syncEntityIds = [paymentSessionId, orderId].filter(
+    (id): id is string => Boolean(id)
+  );
+  const cleanupSyncOutbox = async () => {
+    if (syncEntityIds.length === 0) return;
+    await prisma.syncOutbox.deleteMany({
+      where: { entityId: { in: syncEntityIds } },
+    });
+  };
+
+  await cleanupSyncOutbox();
   if (paymentSessionId) {
     await prisma.paymentTransaction.deleteMany({
       where: { id: paymentSessionId },
@@ -163,6 +174,7 @@ async function cleanup() {
   if (categoryId) {
     await prisma.category.deleteMany({ where: { id: categoryId } });
   }
+  await cleanupSyncOutbox();
 }
 
 async function main() {
@@ -338,10 +350,93 @@ async function main() {
 
   const transactionAfterCounter = await prisma.paymentTransaction.findUnique({
     where: { id: paymentSessionId },
-    select: { status: true, completedAt: true },
+    select: { status: true, completedAt: true, syncRevision: true },
   });
   assert(transactionAfterCounter?.status === "CAPTURED", "Transaction should be captured after counter release.");
   assert(transactionAfterCounter.completedAt, "Transaction completedAt should be set after counter release.");
+  assert(
+    transactionAfterCounter.syncRevision === 2,
+    "Payment syncRevision should advance once for finalization and once for counter capture."
+  );
+
+  assert(paymentSessionId && orderId, "Payment session and order ids are required for outbox assertions.");
+  const syncEvents = await prisma.syncOutbox.findMany({
+    where: { entityId: { in: [paymentSessionId, orderId] } },
+    orderBy: { createdAt: "asc" },
+    select: {
+      eventType: true,
+      entityType: true,
+      entityId: true,
+      idempotencyKey: true,
+      payload: true,
+      sourceRevision: true,
+      status: true,
+    },
+  });
+
+  const eventCount = (eventType: string) =>
+    syncEvents.filter((event) => event.eventType === eventType).length;
+  assert(
+    eventCount("payment.created") === 1,
+    "Payment session creation should enqueue exactly one payment.created event."
+  );
+  assert(
+    eventCount("payment.updated") === 2,
+    "Payment finalization and counter capture should enqueue exactly two payment.updated events."
+  );
+  assert(
+    eventCount("order.created") === 1,
+    "Order finalization should enqueue exactly one order.created event."
+  );
+  assert(
+    eventCount("order.status_updated") === 1,
+    "Counter release should enqueue exactly one order.status_updated event."
+  );
+  assert(
+    syncEvents.every((event) => event.status === "PENDING"),
+    "Phase 1 should leave local outbox rows pending without contacting Supabase."
+  );
+
+  const idempotencyKeys = new Set(syncEvents.map((event) => event.idempotencyKey));
+  assert(
+    idempotencyKeys.size === syncEvents.length,
+    "Outbox idempotency keys should be unique for each logical event."
+  );
+
+  const paymentUpdateRevisions = syncEvents
+    .filter((event) => event.eventType === "payment.updated")
+    .map((event) => event.sourceRevision)
+    .sort((a, b) => Number(a) - Number(b));
+  assert(
+    paymentUpdateRevisions[0] === 1 && paymentUpdateRevisions[1] === 2,
+    "Payment update events should carry monotonic sync revisions."
+  );
+
+  const orderCreatedEvent = syncEvents.find(
+    (event) => event.eventType === "order.created"
+  );
+  const orderStatusEvent = syncEvents.find(
+    (event) => event.eventType === "order.status_updated"
+  );
+  assert(
+    Number(orderStatusEvent?.sourceRevision) > Number(orderCreatedEvent?.sourceRevision),
+    "Order status event should carry a later source revision than order creation."
+  );
+
+  const payloadJson = JSON.stringify(syncEvents.map((event) => event.payload));
+  for (const forbiddenField of [
+    "passwordHash",
+    "secretHash",
+    "tokenHash",
+    "mfaSecretCiphertext",
+    "operationalPinHash",
+    "Authorization",
+  ]) {
+    assert(
+      !payloadJson.includes(forbiddenField),
+      `Outbox payload should not include ${forbiddenField}.`
+    );
+  }
 
   console.log(
     `Cash order flow test passed: ${firstOrderJson.orderNumber} (${orderId})`

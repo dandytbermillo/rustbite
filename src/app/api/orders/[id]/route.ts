@@ -16,6 +16,10 @@ import { bumpOutletOrderVersion } from "@/lib/outlet-order-sync";
 import { checkDeviceTransition } from "@/lib/order-status-transitions";
 import { getLoginIpHash } from "@/lib/login-rate-limit";
 import type { DeviceSessionActor } from "@/lib/device-sessions";
+import {
+  createOrderSyncEvent,
+  updatePaymentTransactionWithSyncEvent,
+} from "@/lib/supabase-sync/outbox";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -232,8 +236,8 @@ async function handleDeviceOperatorOrderUpdate(
             ? "CANCELLED"
             : null;
       if (nextPaymentStatus) {
-        await tx.paymentTransaction.update({
-          where: { id: live.paymentTransaction.id },
+        await updatePaymentTransactionWithSyncEvent(tx, {
+          id: live.paymentTransaction.id,
           data: {
             status: nextPaymentStatus,
             failureCode: null,
@@ -243,6 +247,10 @@ async function handleDeviceOperatorOrderUpdate(
                 ? live.paymentTransaction.completedAt ?? now
                 : live.paymentTransaction.completedAt,
             lastSyncedAt: now,
+          },
+          context: {
+            clientType: actor.role,
+            deviceId: actor.deviceId,
           },
         });
       }
@@ -290,7 +298,19 @@ async function handleDeviceOperatorOrderUpdate(
       now,
     });
 
-    await bumpOutletOrderVersion(tx, live.outletId);
+    const version = await bumpOutletOrderVersion(tx, live.outletId);
+    await createOrderSyncEvent(tx, {
+      eventType: "order.status_updated",
+      order: updated,
+      idempotencyKey: `order:${updated.id}:status:${live.status}->${nextStatus}:rev:${version.revision}`,
+      sourceRevision: version.revision,
+      previousStatus: live.status,
+      nextStatus,
+      context: {
+        clientType: actor.role,
+        deviceId: actor.deviceId,
+      },
+    });
 
     await tx.authAuditLog.create({
       data: {
