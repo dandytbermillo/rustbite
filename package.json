@@ -17,6 +17,7 @@
     "test:sync-outbox-phase1": "npx tsx scripts/test-sync-outbox-phase1.ts",
     "test:sync-outbox-dispatcher": "npx tsx scripts/test-sync-outbox-dispatcher.ts",
     "test:observability-investigation-mode": "npx tsx scripts/test-observability-investigation-mode.ts",
+    "test:observability-synthetic-monitor-token": "npx tsx scripts/test-observability-synthetic-monitor-token.ts",
     "test:admin-rbac-active-outlet": "npx tsx scripts/test-admin-rbac-active-outlet.ts",
     "test:admin-route-data-scope": "npx tsx scripts/test-admin-route-data-scope.ts",
     "test:admin-mfa-step-up": "npx tsx scripts/test-admin-mfa-step-up.ts",
@@ -88,6 +89,7 @@
     "sync:supabase": "npx tsx scripts/sync-supabase-outbox.ts",
     "smoke:routes": "node scripts/smoke-routes.mjs",
     "auth:bootstrap-owner": "npx tsx scripts/bootstrap-owner.ts",
+    "observability:print-synthetic-monitor-token": "npx tsx scripts/print-synthetic-monitor-token.ts",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset --force && prisma db seed"
   },
