@@ -30,7 +30,8 @@ export type AdminPermission =
   | "admin.failover.read"
   | "admin.failover.switch"
   | "admin.auth.users.manage"
-  | "admin.auth.devices.manage";
+  | "admin.auth.devices.manage"
+  | "admin.observability.investigationMode.manage";
 
 const OWNER_PERMISSIONS: ReadonlySet<AdminPermission> = new Set([
   "admin.dashboard.read",
@@ -49,6 +50,7 @@ const OWNER_PERMISSIONS: ReadonlySet<AdminPermission> = new Set([
   "admin.failover.switch",
   "admin.auth.users.manage",
   "admin.auth.devices.manage",
+  "admin.observability.investigationMode.manage",
 ]);
 
 const ADMIN_PERMISSIONS: ReadonlySet<AdminPermission> = new Set([
@@ -67,6 +69,7 @@ const ADMIN_PERMISSIONS: ReadonlySet<AdminPermission> = new Set([
   "admin.failover.read",
   "admin.auth.users.manage",
   "admin.auth.devices.manage",
+  "admin.observability.investigationMode.manage",
 ]);
 
 const OUTLET_ROLE_PERMISSIONS: Record<

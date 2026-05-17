@@ -601,6 +601,7 @@ model AppSettings {
   storeLocation          String   @default("")
   gstRate                Decimal  @default(0.05) @db.Decimal(5, 4)
   dealDefaultDiscountPct Decimal? @db.Decimal(5, 2)
+  investigationModeUntil DateTime?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
