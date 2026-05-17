@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { DragEvent } from "react";
 import {
   AlertTriangle,
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   Eye,
   EyeOff,
+  GripVertical,
   History,
   Pencil,
   Plus,
@@ -386,6 +386,25 @@ function rowAddOnManagerFocus(
     itemGroupIds: groups.map((group) => group.id),
     itemOptionIdsByGroupId,
   };
+}
+
+function applyWorkspaceMenuOptimisticOrder(
+  rows: WorkspaceMenuItemRow[],
+  order: string[] | undefined,
+): WorkspaceMenuItemRow[] {
+  if (!order) return rows;
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const orderedRows: WorkspaceMenuItemRow[] = [];
+  for (const itemId of order) {
+    const row = byId.get(itemId);
+    if (!row) continue;
+    orderedRows.push(row);
+    byId.delete(itemId);
+  }
+  for (const row of rows) {
+    if (byId.has(row.id)) orderedRows.push(row);
+  }
+  return orderedRows;
 }
 
 function OptionStockBadge({ stock }: { stock: WorkspaceMenuAddonOption["stock"] }) {
@@ -1100,15 +1119,17 @@ function MenuRow({
   visibilityBusy,
   reorderBusy,
   canReorder,
-  canMoveUp,
-  canMoveDown,
+  dragging,
+  dropTarget,
   onEdit,
   onToggleVisibility,
   onQuickStock,
   onEditAddonStock,
   onOpenAddOns,
-  onMoveUp,
-  onMoveDown,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
 }: {
   row: WorkspaceMenuItemRow;
   target: boolean;
@@ -1120,8 +1141,8 @@ function MenuRow({
   visibilityBusy: boolean;
   reorderBusy: boolean;
   canReorder: boolean;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
+  dragging: boolean;
+  dropTarget: boolean;
   onEdit: (itemId: string) => void;
   onToggleVisibility: (itemId: string) => void;
   onQuickStock: (itemId: string) => void;
@@ -1130,8 +1151,10 @@ function MenuRow({
     addon: WorkspaceMenuAddonOption,
   ) => void;
   onOpenAddOns: (row: WorkspaceMenuItemRow) => void;
-  onMoveUp: (itemId: string) => void;
-  onMoveDown: (itemId: string) => void;
+  onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
+  onDragEnd: () => void;
+  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
+  onDrop: (event: DragEvent<HTMLDivElement>) => void;
 }) {
   const canQuickToggleStock =
     canWriteMenu &&
@@ -1148,6 +1171,8 @@ function MenuRow({
     <div
       data-testid={target ? "workspace-menu-target-row" : "workspace-menu-row"}
       aria-current={target ? "true" : undefined}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       className={`overflow-hidden rounded-xl border ${
         // Outer card: border colors only. The active tint is applied to
         // the header strip below (and not the body) so inner sub-cards
@@ -1168,122 +1193,150 @@ function MenuRow({
         // glance. The target ring (URL-focused row) layers on top — if
         // a row is both targeted and open, the ring wraps the card.
         open ? "border-l-4 border-l-yellow-500" : ""
-      } ${target ? "ring-2 ring-yellow-300 ring-offset-2" : ""}`}
+      } ${target ? "ring-2 ring-yellow-300 ring-offset-2" : ""} ${
+        dropTarget ? "ring-2 ring-yellow-300 ring-offset-1" : ""
+      }`}
+      style={{
+        opacity: dragging ? 0.55 : undefined,
+        boxShadow: dropTarget ? "inset 0 3px 0 #facc15" : undefined,
+      }}
     >
-      <button
-        type="button"
-        onClick={onToggle}
+      <div
         // Header gets the active tint when open. Outer card stays white
         // and body returns to neutral — only the title strip is
         // highlighted, so the inner sub-cards aren't competing with a
         // full yellow wash.
-        className={`grid w-full grid-cols-[44px_minmax(0,1fr)_92px_120px_112px_24px] items-center gap-3 px-3 py-3 text-left ${
+        className={`grid w-full grid-cols-[24px_minmax(0,1fr)] items-center gap-2 px-3 py-3 text-left ${
           open ? "bg-yellow-50" : ""
         }`}
-        aria-expanded={open}
-        aria-controls={`workspace-menu-detail-${row.id}`}
       >
-        <div
-          className={`flex h-9 w-9 items-center justify-center text-2xl ${
-            rowHidden ? "opacity-70 grayscale" : ""
-          }`}
-          aria-hidden
+        {canReorder ? (
+          <button
+            type="button"
+            data-no-drag
+            data-testid="workspace-menu-reorder-handle"
+            draggable={!reorderBusy}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            disabled={reorderBusy}
+            aria-label={`Drag to reorder ${row.name}`}
+            title={reorderBusy ? "Reorder in progress..." : "Drag to reorder"}
+            className="flex h-9 w-6 cursor-grab items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <GripVertical size={15} strokeWidth={2.5} aria-hidden />
+          </button>
+        ) : (
+          <span aria-hidden />
+        )}
+        <button
+          type="button"
+          onClick={onToggle}
+          className="grid w-full grid-cols-[44px_minmax(0,1fr)_92px_120px_112px_24px] items-center gap-3 text-left"
+          aria-expanded={open}
+          aria-controls={`workspace-menu-detail-${row.id}`}
         >
-          {row.emoji}
-        </div>
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <div
-              className={`truncate text-sm font-black ${
-                rowHidden ? "text-stone-600" : "text-stone-950"
-              }`}
-            >
-              {row.name}
-            </div>
-            {row.badge && (
-              <span className="rounded-full border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-stone-600">
-                {row.badge}
-              </span>
-            )}
-            {row.attention.map((attention) => (
-              <span
-                key={attention}
-                data-testid="workspace-menu-attention-chip"
-                className="rounded-full border border-yellow-200 bg-yellow-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-900"
+          <div
+            className={`flex h-9 w-9 items-center justify-center text-2xl ${
+              rowHidden ? "opacity-70 grayscale" : ""
+            }`}
+            aria-hidden
+          >
+            {row.emoji}
+          </div>
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div
+                className={`truncate text-sm font-black ${
+                  rowHidden ? "text-stone-600" : "text-stone-950"
+                }`}
               >
-                {ATTENTION_LABELS[attention]}
+                {row.name}
+              </div>
+              {row.badge && (
+                <span className="rounded-full border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-stone-600">
+                  {row.badge}
+                </span>
+              )}
+              {row.attention.map((attention) => (
+                <span
+                  key={attention}
+                  data-testid="workspace-menu-attention-chip"
+                  className="rounded-full border border-yellow-200 bg-yellow-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-amber-900"
+                >
+                  {ATTENTION_LABELS[attention]}
+                </span>
+              ))}
+            </div>
+            {/* Category prefix was here ("Burgers · …"); dropped because
+                the row is rendered visually indented under its category
+                card, so the parent is communicated by position rather than
+                by repeating the name in every subtitle. */}
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold text-stone-500">
+              {row.description && (
+                <span className="truncate">{row.description}</span>
+              )}
+              {row.optionSummary.length > 0 && (
+                <>
+                  {row.description && (
+                    <span className="text-stone-300">·</span>
+                  )}
+                  <span>{row.optionSummary.join(" · ")}</span>
+                </>
+              )}
+              {row.dealExpiresLabel && (
+                <>
+                  {(row.description || row.optionSummary.length > 0) && (
+                    <span className="text-stone-300">·</span>
+                  )}
+                  <span>{row.dealExpiresLabel}</span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="mono text-right text-sm font-black text-stone-950">
+            {row.priceLabel}
+          </div>
+          <div className="flex flex-col items-end gap-1">
+            <span
+              className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${visibilityClasses(
+                row.visibilityState,
+              )}`}
+            >
+              {row.visibilityState}
+            </span>
+            {rowHidden && !row.isDeal ? (
+              <span className="max-w-[128px] text-right text-[10px] font-bold leading-tight text-stone-500">
+                Not on kiosk
               </span>
-            ))}
+            ) : row.visibilityReason ? (
+              <span className="max-w-[128px] text-right text-[10px] font-bold leading-tight text-stone-500">
+                {row.visibilityReason}
+              </span>
+            ) : null}
           </div>
-          {/* Category prefix was here ("Burgers · …"); dropped because
-              the row is rendered visually indented under its category
-              card, so the parent is communicated by position rather than
-              by repeating the name in every subtitle. */}
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold text-stone-500">
-            {row.description && (
-              <span className="truncate">{row.description}</span>
-            )}
-            {row.optionSummary.length > 0 && (
-              <>
-                {row.description && (
-                  <span className="text-stone-300">·</span>
-                )}
-                <span>{row.optionSummary.join(" · ")}</span>
-              </>
-            )}
-            {row.dealExpiresLabel && (
-              <>
-                {(row.description || row.optionSummary.length > 0) && (
-                  <span className="text-stone-300">·</span>
-                )}
-                <span>{row.dealExpiresLabel}</span>
-              </>
+          <div className="flex flex-col items-end gap-1 text-right">
+            <span
+              className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${stockClasses(
+                row.stockTone,
+              )}`}
+            >
+              {row.stockLabel}
+            </span>
+            {unavailableForSale && (
+              <span className="max-w-[128px] text-right text-[10px] font-bold leading-tight text-stone-500">
+                Cannot order
+              </span>
             )}
           </div>
-        </div>
-        <div className="mono text-right text-sm font-black text-stone-950">
-          {row.priceLabel}
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <span
-            className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${visibilityClasses(
-              row.visibilityState,
-            )}`}
-          >
-            {row.visibilityState}
-          </span>
-          {rowHidden && !row.isDeal ? (
-            <span className="max-w-[128px] text-right text-[10px] font-bold leading-tight text-stone-500">
-              Not on kiosk
-            </span>
-          ) : row.visibilityReason ? (
-            <span className="max-w-[128px] text-right text-[10px] font-bold leading-tight text-stone-500">
-              {row.visibilityReason}
-            </span>
-          ) : null}
-        </div>
-        <div className="flex flex-col items-end gap-1 text-right">
-          <span
-            className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${stockClasses(
-              row.stockTone,
-            )}`}
-          >
-            {row.stockLabel}
-          </span>
-          {unavailableForSale && (
-            <span className="max-w-[128px] text-right text-[10px] font-bold leading-tight text-stone-500">
-              Cannot order
-            </span>
-          )}
-        </div>
-        <ChevronDown
-          size={16}
-          strokeWidth={2.5}
-          className="text-stone-400 transition-transform"
-          style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
-          aria-hidden
-        />
-      </button>
+          <ChevronDown
+            size={16}
+            strokeWidth={2.5}
+            className="text-stone-400 transition-transform"
+            style={{ transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+            aria-hidden
+          />
+        </button>
+      </div>
 
       {open && (
         // Body bg is neutral so inner sub-cards (Sizes / Add-on sets /
@@ -1354,42 +1407,6 @@ function MenuRow({
               </div>
             )}
             <div className="flex flex-wrap items-center justify-end gap-2">
-              {canWriteMenu && canReorder && (
-                <>
-                  <button
-                    type="button"
-                    data-no-drag
-                    data-testid="workspace-menu-reorder-up"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onMoveUp(row.id);
-                    }}
-                    disabled={!canMoveUp || reorderBusy}
-                    aria-label={`Move ${row.name} up`}
-                    title="Move up"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-stone-700 hover:border-stone-400 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <ArrowUp size={12} strokeWidth={2.5} aria-hidden />
-                    Up
-                  </button>
-                  <button
-                    type="button"
-                    data-no-drag
-                    data-testid="workspace-menu-reorder-down"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onMoveDown(row.id);
-                    }}
-                    disabled={!canMoveDown || reorderBusy}
-                    aria-label={`Move ${row.name} down`}
-                    title="Move down"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-stone-700 hover:border-stone-400 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <ArrowDown size={12} strokeWidth={2.5} aria-hidden />
-                    Down
-                  </button>
-                </>
-              )}
               {canQuickToggleStock && (
                 <button
                   type="button"
@@ -1789,6 +1806,14 @@ export default function AdminWorkspaceMenuWidget({
   const [categorySaving, setCategorySaving] = useState(false);
   const [categoryBusyId, setCategoryBusyId] = useState<string | null>(null);
   const [reorderCategoryId, setReorderCategoryId] = useState<string | null>(null);
+  const [optimisticOrderByCategory, setOptimisticOrderByCategory] = useState<
+    Map<string, string[]>
+  >(() => new Map());
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    categoryId: string;
+    itemId: string;
+  } | null>(null);
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
   const [quickStockItemId, setQuickStockItemId] = useState<string | null>(null);
   const [addonStockBusyKey, setAddonStockBusyKey] = useState<string | null>(null);
@@ -1848,6 +1873,40 @@ export default function AdminWorkspaceMenuWidget({
   const [showSummon, setShowSummon] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const toolbarOpen = !showSummon || manualOpen;
+
+  function setOptimisticOrder(categoryId: string, order: string[] | null) {
+    setOptimisticOrderByCategory((current) => {
+      const next = new Map(current);
+      if (order) next.set(categoryId, order);
+      else next.delete(categoryId);
+      return next;
+    });
+  }
+
+  function clearReorderDragState() {
+    setDraggedItemId(null);
+    setDropTarget(null);
+  }
+
+  useEffect(() => {
+    if (optimisticOrderByCategory.size === 0) return;
+    const next = new Map(optimisticOrderByCategory);
+    let changed = false;
+
+    for (const [categoryId, order] of optimisticOrderByCategory) {
+      const section = summary.sections.find(
+        (candidate) => candidate.category.id === categoryId,
+      );
+      if (!section || section.items.length !== order.length) continue;
+      const currentOrder = section.items.map((row) => row.id);
+      if (currentOrder.every((itemId, index) => itemId === order[index])) {
+        next.delete(categoryId);
+        changed = true;
+      }
+    }
+
+    if (changed) setOptimisticOrderByCategory(next);
+  }, [optimisticOrderByCategory, summary.sections]);
 
   function menuItemNoun(item: MenuEditorItem): "Deal" | "Item" {
     return editorContext && isDealEditorItem(item, editorContext.categories)
@@ -3557,30 +3616,26 @@ export default function AdminWorkspaceMenuWidget({
     }
   }
 
-  async function reorderItemInCategory({
+  async function reorderItemsInCategory({
     category,
     rows,
-    itemId,
-    direction,
+    orderedItemIds,
   }: {
     category: WorkspaceMenuCategoryOption;
     rows: WorkspaceMenuItemRow[];
-    itemId: string;
-    direction: -1 | 1;
+    orderedItemIds: string[];
   }) {
     if (!canWriteMenu || reorderCategoryId) return;
     const expectedCurrentOrder = rows.map((row) => row.id);
-    const currentIndex = expectedCurrentOrder.indexOf(itemId);
-    const nextIndex = currentIndex + direction;
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= rows.length) return;
-
-    const orderedItemIds = [...expectedCurrentOrder];
-    [orderedItemIds[currentIndex], orderedItemIds[nextIndex]] = [
-      orderedItemIds[nextIndex],
-      orderedItemIds[currentIndex],
-    ];
+    if (
+      orderedItemIds.length !== expectedCurrentOrder.length ||
+      orderedItemIds.every((itemId, index) => itemId === expectedCurrentOrder[index])
+    ) {
+      return;
+    }
 
     try {
+      setOptimisticOrder(category.id, orderedItemIds);
       setReorderCategoryId(category.id);
       setEditorError(null);
       const response = await fetch(`/api/admin/categories/${category.id}/reorder`, {
@@ -3600,6 +3655,7 @@ export default function AdminWorkspaceMenuWidget({
       notify({ message: `Menu order saved: ${category.name}` });
       void refreshRef.current?.();
     } catch (error) {
+      setOptimisticOrder(category.id, null);
       const message = clientErrorMessage(error, "reorder these items");
       setEditorError(message);
       window.alert(message);
@@ -4289,6 +4345,10 @@ export default function AdminWorkspaceMenuWidget({
             {summary.sections.map((section) => {
               const categoryOption = categoryById.get(section.category.id) ?? null;
               const categoryHidden = !section.category.isActive;
+              const renderedItems = applyWorkspaceMenuOptimisticOrder(
+                section.items,
+                optimisticOrderByCategory.get(section.category.id),
+              );
               const reorderEnabled =
                 !!categoryOption &&
                 canWriteMenu &&
@@ -4421,10 +4481,10 @@ export default function AdminWorkspaceMenuWidget({
                       Customers cannot see this category or its items on the kiosk.
                     </div>
                   )}
-                  {section.items.length > 0 ? (
+                  {renderedItems.length > 0 ? (
                   <div className="overflow-x-auto py-2 pl-9 pr-2">
                     <div className="min-w-[790px] space-y-2 border-l-2 border-stone-200 pl-3">
-                      {section.items.map((row, rowIndex) => (
+                      {renderedItems.map((row) => (
                         <MenuRow
                           key={row.id}
                           row={row}
@@ -4436,8 +4496,13 @@ export default function AdminWorkspaceMenuWidget({
                           visibilityBusy={busyItemId === row.id}
                           reorderBusy={reorderCategoryId === section.category.id}
                           canReorder={reorderEnabled}
-                          canMoveUp={rowIndex > 0}
-                          canMoveDown={rowIndex < section.items.length - 1}
+                          dragging={draggedItemId === row.id}
+                          dropTarget={
+                            draggedItemId != null &&
+                            draggedItemId !== row.id &&
+                            dropTarget?.categoryId === section.category.id &&
+                            dropTarget.itemId === row.id
+                          }
                           onEdit={(itemId) => void openEditor(itemId)}
                           onToggleVisibility={(itemId) =>
                             void toggleRowItemVisibility(itemId)
@@ -4453,22 +4518,62 @@ export default function AdminWorkspaceMenuWidget({
                               focus ?? undefined,
                             );
                           }}
-                          onMoveUp={(itemId) => {
-                            if (!categoryOption) return;
-                            void reorderItemInCategory({
-                              category: categoryOption,
-                              rows: section.items,
-                              itemId,
-                              direction: -1,
-                            });
+                          onDragStart={(event) => {
+                            if (!reorderEnabled) {
+                              event.preventDefault();
+                              return;
+                            }
+                            setDraggedItemId(row.id);
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", row.id);
                           }}
-                          onMoveDown={(itemId) => {
-                            if (!categoryOption) return;
-                            void reorderItemInCategory({
+                          onDragEnd={clearReorderDragState}
+                          onDragOver={(event) => {
+                            if (!draggedItemId || !reorderEnabled) return;
+                            if (!renderedItems.some((item) => item.id === draggedItemId)) {
+                              return;
+                            }
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            if (
+                              dropTarget?.categoryId !== section.category.id ||
+                              dropTarget.itemId !== row.id
+                            ) {
+                              setDropTarget({
+                                categoryId: section.category.id,
+                                itemId: row.id,
+                              });
+                            }
+                          }}
+                          onDrop={(event) => {
+                            if (!categoryOption || !draggedItemId || !reorderEnabled) {
+                              clearReorderDragState();
+                              return;
+                            }
+                            event.preventDefault();
+                            const expectedCurrentOrder = renderedItems.map(
+                              (item) => item.id,
+                            );
+                            const fromIndex = expectedCurrentOrder.indexOf(
+                              draggedItemId,
+                            );
+                            const toIndex = expectedCurrentOrder.indexOf(row.id);
+                            if (
+                              fromIndex < 0 ||
+                              toIndex < 0 ||
+                              draggedItemId === row.id
+                            ) {
+                              clearReorderDragState();
+                              return;
+                            }
+                            const orderedItemIds = [...expectedCurrentOrder];
+                            orderedItemIds.splice(fromIndex, 1);
+                            orderedItemIds.splice(toIndex, 0, draggedItemId);
+                            clearReorderDragState();
+                            void reorderItemsInCategory({
                               category: categoryOption,
-                              rows: section.items,
-                              itemId,
-                              direction: 1,
+                              rows: renderedItems,
+                              orderedItemIds,
                             });
                           }}
                           onToggle={() =>

@@ -14,6 +14,10 @@ import type { AdminWorkspaceDashboardSummary } from "@/lib/admin/workspace/dashb
 import type { AdminWorkspaceDevicesSummary } from "@/lib/admin/workspace/devices-summary";
 import type { AdminWorkspaceOrdersSummary } from "@/lib/admin/workspace/orders-summary";
 import type { AdminWorkspaceMenuSummary } from "@/lib/admin/workspace/menu-summary";
+import type {
+  AdminOutletRow,
+  AdminUserRow,
+} from "@/lib/admin-user-management";
 import {
   ADMIN_WORKSPACE_WIDGET_LABELS,
   adminWorkspaceWidgetFocusHref,
@@ -26,12 +30,23 @@ import AdminWorkspaceToastHost, {
   type AdminWorkspaceToast,
 } from "./AdminWorkspaceToastHost";
 import WorkspaceDevicesPanel from "./WorkspaceDevicesPanel";
+import UsersManagementPanel, {
+  type UsersManagementPanelData,
+} from "@/components/admin/users/UsersManagementPanel";
 
 export type WorkspaceUtilityModal =
   | "dealHistory"
   | "settings"
   | "security"
-  | "devices";
+  | "devices"
+  | "users";
+
+export type AdminWorkspaceUsersData = {
+  users: AdminUserRow[];
+  outlets: AdminOutletRow[];
+  passwordPolicy: string;
+  canManageSiteAdminAccounts: boolean;
+};
 
 function utilityModalSearchValue(modal: WorkspaceUtilityModal): string {
   return modal === "dealHistory" ? "deal-history" : modal;
@@ -42,11 +57,13 @@ function utilityModalAllowed(
   canReadDealHistory: boolean,
   canReadSettings: boolean,
   canReadDevices: boolean,
+  canManageUsers: boolean,
 ): modal is WorkspaceUtilityModal {
   if (!modal) return false;
   if (modal === "dealHistory") return canReadDealHistory;
   if (modal === "settings") return canReadSettings;
   if (modal === "devices") return canReadDevices;
+  if (modal === "users") return canManageUsers;
   return true;
 }
 
@@ -58,6 +75,7 @@ export default function AdminWorkspaceClient({
   roleLabel,
   access,
   canWriteMenu,
+  canManageUsers,
   canManageDevices,
   canReadDevices,
   canReadDealHistory,
@@ -70,6 +88,7 @@ export default function AdminWorkspaceClient({
   initialOrdersTargetOrderId,
   menuSummary,
   devicesSummary,
+  usersData,
 }: {
   outletId: string;
   outletName: string;
@@ -78,6 +97,7 @@ export default function AdminWorkspaceClient({
   roleLabel: string;
   access: AdminWorkspaceWidgetAccess[];
   canWriteMenu: boolean;
+  canManageUsers: boolean;
   canManageDevices: boolean;
   canReadDevices: boolean;
   canReadDealHistory: boolean;
@@ -90,18 +110,35 @@ export default function AdminWorkspaceClient({
   initialOrdersTargetOrderId: string | null;
   menuSummary: AdminWorkspaceMenuSummary | null;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
+  usersData: AdminWorkspaceUsersData | null;
 }) {
   const visibleCount = access.filter((entry) => entry.canView).length;
   const [currentDevicesSummary, setCurrentDevicesSummary] =
     useState(devicesSummary);
+  const [currentUsersData, setCurrentUsersData] = useState(usersData);
 
   useEffect(() => {
     setCurrentDevicesSummary(devicesSummary);
   }, [devicesSummary]);
 
+  useEffect(() => {
+    setCurrentUsersData(usersData);
+  }, [usersData]);
+
   const handleDevicesSummaryChange = useCallback(
     (nextSummary: AdminWorkspaceDevicesSummary) => {
       setCurrentDevicesSummary(nextSummary);
+    },
+    [],
+  );
+
+  const handleUsersChange = useCallback(
+    (data: UsersManagementPanelData) => {
+      setCurrentUsersData((current) =>
+        current
+          ? { ...current, users: data.users, outlets: data.outlets }
+          : null,
+      );
     },
     [],
   );
@@ -157,6 +194,7 @@ export default function AdminWorkspaceClient({
         canReadDealHistory,
         canReadSettings,
         canReadDevices,
+        canManageUsers,
       )
         ? initialUtilityModal
         : null,
@@ -272,6 +310,7 @@ export default function AdminWorkspaceClient({
         canReadDealHistory,
         canReadSettings,
         canReadDevices,
+        canManageUsers,
       )
     ) {
       return;
@@ -413,6 +452,7 @@ export default function AdminWorkspaceClient({
                 canReadDealHistory={canReadDealHistory}
                 canReadSettings={canReadSettings}
                 canReadDevices={canReadDevices}
+                canManageUsers={canManageUsers}
                 onOpenUtility={openUtilityModal}
               />
             </nav>
@@ -464,6 +504,7 @@ export default function AdminWorkspaceClient({
                     canReadDealHistory={canReadDealHistory}
                     canReadSettings={canReadSettings}
                     canReadDevices={canReadDevices}
+                    canManageUsers={canManageUsers}
                     onOpenUtility={openUtilityModal}
                     compact
                   />
@@ -530,9 +571,11 @@ export default function AdminWorkspaceClient({
           canWriteMenu={canWriteMenu}
           canManageDevices={canManageDevices}
           devicesSummary={currentDevicesSummary}
+          usersData={currentUsersData}
           initialDevicesModalDeviceId={initialDevicesModalDeviceId}
           notify={notify}
           onDevicesSummaryChange={handleDevicesSummaryChange}
+          onUsersChange={handleUsersChange}
           onRestoreDeal={restoreDealFromHistoryInWorkspace}
           onClose={closeUtilityModal}
         />
@@ -546,11 +589,13 @@ function WorkspaceMoreMenu({
   canReadDealHistory,
   canReadSettings,
   canReadDevices,
+  canManageUsers,
   onOpenUtility,
 }: {
   canReadDealHistory: boolean;
   canReadSettings: boolean;
   canReadDevices: boolean;
+  canManageUsers: boolean;
   onOpenUtility: (modal: WorkspaceUtilityModal) => void;
 }) {
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
@@ -596,6 +641,7 @@ function WorkspaceMoreMenu({
           canReadDealHistory={canReadDealHistory}
           canReadSettings={canReadSettings}
           canReadDevices={canReadDevices}
+          canManageUsers={canManageUsers}
           onOpenUtility={(modal) => {
             detailsRef.current?.removeAttribute("open");
             onOpenUtility(modal);
@@ -610,12 +656,14 @@ function WorkspaceMoreLinks({
   canReadDealHistory,
   canReadSettings,
   canReadDevices,
+  canManageUsers,
   onOpenUtility,
   compact = false,
 }: {
   canReadDealHistory: boolean;
   canReadSettings: boolean;
   canReadDevices: boolean;
+  canManageUsers: boolean;
   onOpenUtility: (modal: WorkspaceUtilityModal) => void;
   compact?: boolean;
 }) {
@@ -635,6 +683,15 @@ function WorkspaceMoreLinks({
             modal: "devices" as const,
             label: "Manage devices",
             testId: "manage-devices",
+          },
+        ]
+      : []),
+    ...(canManageUsers
+      ? [
+          {
+            modal: "users" as const,
+            label: "Manage users",
+            testId: "manage-users",
           },
         ]
       : []),
@@ -683,9 +740,11 @@ function WorkspaceUtilityDialog({
   canWriteMenu,
   canManageDevices,
   devicesSummary,
+  usersData,
   initialDevicesModalDeviceId,
   notify,
   onDevicesSummaryChange,
+  onUsersChange,
   onRestoreDeal,
   onClose,
 }: {
@@ -693,14 +752,17 @@ function WorkspaceUtilityDialog({
   canWriteMenu: boolean;
   canManageDevices: boolean;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
+  usersData: AdminWorkspaceUsersData | null;
   initialDevicesModalDeviceId: string | null;
   notify: AdminWorkspaceNotify;
   onDevicesSummaryChange: (summary: AdminWorkspaceDevicesSummary) => void;
+  onUsersChange: (data: UsersManagementPanelData) => void;
   onRestoreDeal: (entry: DealHistoryEntry) => void;
   onClose: () => void;
 }) {
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const [devicesDirty, setDevicesDirty] = useState(false);
+  const [usersDirty, setUsersDirty] = useState(false);
   const title =
     modal === "dealHistory"
       ? "Deal history"
@@ -708,7 +770,9 @@ function WorkspaceUtilityDialog({
         ? "Settings"
         : modal === "devices"
           ? "Devices"
-          : "Security";
+          : modal === "users"
+            ? "Users"
+            : "Security";
 
   const requestClose = useCallback(() => {
     if (
@@ -720,8 +784,17 @@ function WorkspaceUtilityDialog({
     ) {
       return;
     }
+    if (
+      modal === "users" &&
+      usersDirty &&
+      !window.confirm(
+        "Discard unsaved user changes? Your changes will not be saved.",
+      )
+    ) {
+      return;
+    }
     onClose();
-  }, [devicesDirty, modal, onClose]);
+  }, [devicesDirty, modal, onClose, usersDirty]);
 
   useEffect(() => {
     closeButtonRef.current?.focus();
@@ -737,6 +810,7 @@ function WorkspaceUtilityDialog({
 
   useEffect(() => {
     setDevicesDirty(false);
+    setUsersDirty(false);
   }, [modal]);
 
   return (
@@ -797,6 +871,21 @@ function WorkspaceUtilityDialog({
               />
             ) : (
               <WorkspaceUtilityError message="Device summary is not available for this role." />
+            )
+          ) : modal === "users" ? (
+            usersData ? (
+              <UsersManagementPanel
+                initialUsers={usersData.users}
+                initialOutlets={usersData.outlets}
+                passwordPolicy={usersData.passwordPolicy}
+                canManageSiteAdminAccounts={usersData.canManageSiteAdminAccounts}
+                variant="workspace-modal"
+                notify={notify}
+                onDirtyChange={setUsersDirty}
+                onUsersChange={onUsersChange}
+              />
+            ) : (
+              <WorkspaceUtilityError message="User management is not available for this role." />
             )
           ) : (
             <MfaClient showHeader={false} />

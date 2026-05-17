@@ -20,10 +20,17 @@ import {
   workspaceMenuFilterFromParams,
 } from "@/lib/admin/workspace/menu-summary";
 import AdminWorkspaceClient, {
+  type AdminWorkspaceUsersData,
   type WorkspaceUtilityModal,
 } from "@/components/admin/workspace/AdminWorkspaceClient";
 import type { AdminWorkspaceWidgetAccess } from "@/lib/admin/workspace/layout";
 import { parseWorkspaceWidgetId } from "@/lib/admin/workspace/deep-links";
+import {
+  canManageSiteAdminAccounts,
+  listAdminOutlets,
+  listAdminUsers,
+  passwordPolicyText,
+} from "@/lib/admin-user-management";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -64,6 +71,8 @@ function parseWorkspaceUtilityModal(
       return "security";
     case "devices":
       return "devices";
+    case "users":
+      return "users";
     default:
       return null;
   }
@@ -103,6 +112,7 @@ export default async function AdminWorkspacePage({
     canWriteMenu,
     canReadDevices,
     canManageDevices,
+    canManageUsers,
     canReadDealHistory,
     canReadSettings,
   ] = await Promise.all([
@@ -133,6 +143,11 @@ export default async function AdminWorkspacePage({
     ),
     adminActorHasPermission(
       permission.actor,
+      "admin.auth.users.manage",
+      permission.outletId,
+    ),
+    adminActorHasPermission(
+      permission.actor,
       "admin.dealHistory.read",
       permission.outletId,
     ),
@@ -157,9 +172,11 @@ export default async function AdminWorkspacePage({
         ? null
         : requestedUtilityModal === "devices" && !canReadDevices
           ? null
-          : requestedUtilityModal;
+          : requestedUtilityModal === "users" && !canManageUsers
+            ? null
+            : requestedUtilityModal;
   const cookieStore = await cookies();
-  const [dashboardSummary, ordersSummary, menuSummary, devicesSummary] =
+  const [dashboardSummary, ordersSummary, menuSummary, devicesSummary, usersData] =
     await Promise.all([
     buildAdminWorkspaceDashboardSummary({
       context: permission,
@@ -182,6 +199,18 @@ export default async function AdminWorkspacePage({
     canReadDevices
       ? buildAdminWorkspaceDevicesSummary({ context: permission })
       : Promise.resolve(null),
+    canManageUsers
+      ? Promise.all([listAdminUsers(), listAdminOutlets()]).then(
+          ([users, outlets]): AdminWorkspaceUsersData => ({
+            users,
+            outlets,
+            passwordPolicy: passwordPolicyText(),
+            canManageSiteAdminAccounts: canManageSiteAdminAccounts(
+              permission.actor,
+            ),
+          }),
+        )
+      : Promise.resolve(null),
   ]);
 
   return (
@@ -193,6 +222,7 @@ export default async function AdminWorkspacePage({
       roleLabel={displayActiveRole(permission.activeOutlet.role)}
       access={access}
       canWriteMenu={canWriteMenu}
+      canManageUsers={canManageUsers}
       canManageDevices={canManageDevices}
       canReadDevices={canReadDevices}
       canReadDealHistory={canReadDealHistory}
@@ -205,6 +235,7 @@ export default async function AdminWorkspacePage({
       initialOrdersTargetOrderId={initialOrdersTargetOrderId}
       menuSummary={menuSummary}
       devicesSummary={devicesSummary}
+      usersData={usersData}
     />
   );
 }

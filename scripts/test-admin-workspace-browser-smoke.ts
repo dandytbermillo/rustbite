@@ -57,6 +57,7 @@ const deviceDisabledId = `${runId}-device-disabled`;
 const deviceOtherOutletId = `${runId}-device-other`;
 const userEmails = {
   owner: `${runId}-owner@example.test`,
+  admin: `${runId}-admin@example.test`,
   manager: `${runId}-manager@example.test`,
   operator: `${runId}-operator@example.test`,
   viewer: `${runId}-viewer@example.test`,
@@ -614,7 +615,7 @@ async function seedFixture(): Promise<Fixture> {
     ],
   });
 
-  const [owner, manager, operator, viewer] = await Promise.all([
+  const [owner, admin, manager, operator, viewer] = await Promise.all([
     prisma.adminUser.create({
       data: {
         email: userEmails.owner,
@@ -624,6 +625,18 @@ async function seedFixture(): Promise<Fixture> {
         siteRole: "OWNER",
         mfaEnabledAt: new Date(),
         mfaSecretCiphertext: `${runId}-mfa-secret`,
+        isActive: true,
+      },
+    }),
+    prisma.adminUser.create({
+      data: {
+        email: userEmails.admin,
+        displayName: "Workspace Smoke Admin",
+        passwordHash: `${runId}-hash`,
+        accountType: "ADMIN",
+        siteRole: "ADMIN",
+        mfaEnabledAt: new Date(),
+        mfaSecretCiphertext: `${runId}-admin-mfa-secret`,
         isActive: true,
       },
     }),
@@ -686,6 +699,7 @@ async function seedFixture(): Promise<Fixture> {
   return {
     tokens: {
       owner: await createAdminSession(owner.id, "owner"),
+      admin: await createAdminSession(admin.id, "admin"),
       manager: await createAdminSession(manager.id, "manager"),
       operator: await createAdminSession(operator.id, "operator"),
       viewer: await createAdminSession(viewer.id, "viewer"),
@@ -695,10 +709,10 @@ async function seedFixture(): Promise<Fixture> {
 
 async function cleanup() {
   await prisma.adminSession.deleteMany({
-    where: { user: { email: { in: Object.values(userEmails) } } },
+    where: { user: { email: { startsWith: `${runId}-` } } },
   });
   await prisma.adminUser.deleteMany({
-    where: { email: { in: Object.values(userEmails) } },
+    where: { email: { startsWith: `${runId}-` } },
   });
   await prisma.deviceOutletAccess.deleteMany({
     where: { OR: [{ outletId: outletAId }, { outletId: outletBId }] },
@@ -792,7 +806,7 @@ async function assertNoSmokeRowsRemain() {
     }),
     prisma.device.count({ where: { name: { startsWith: runId } } }),
     prisma.adminUser.count({
-      where: { email: { in: Object.values(userEmails) } },
+      where: { email: { startsWith: `${runId}-` } },
     }),
     prisma.menuAuditLog.count({
       where: { outletId: { in: [outletAId, outletBId] } },
@@ -2027,9 +2041,12 @@ async function expectMenuWidgetData(page: Page, expectsMenuWrite: boolean) {
     ).toBeVisible();
     await rowAddOnsDialog.getByRole("button", { name: "Close add-ons" }).click();
     await expect(rowAddOnsDialog).toBeHidden();
-    await expect(detail.getByTestId("workspace-menu-reorder-up")).toBeVisible();
     await expect(
-      detail.getByTestId("workspace-menu-reorder-down"),
+      widget
+        .getByTestId("workspace-menu-row")
+        .filter({ hasText: `${runId} Burger` })
+        .first()
+        .getByTestId("workspace-menu-reorder-handle"),
     ).toBeVisible();
     await expect(
       detail.getByTestId("workspace-menu-quick-stock"),
@@ -2245,10 +2262,7 @@ async function expectMenuWidgetData(page: Page, expectsMenuWrite: boolean) {
     await expect(
       detail.getByTestId("workspace-menu-addon-stock-edit"),
     ).toHaveCount(0);
-    await expect(detail.getByTestId("workspace-menu-reorder-up")).toHaveCount(
-      0,
-    );
-    await expect(detail.getByTestId("workspace-menu-reorder-down")).toHaveCount(
+    await expect(widget.getByTestId("workspace-menu-reorder-handle")).toHaveCount(
       0,
     );
   }
@@ -3056,9 +3070,11 @@ async function assertWorkspaceMenuReorder(browser: Browser, token: string) {
     await expect(rows.nth(0)).toContainText(`${runId} Burger`);
     await expect(rows.nth(1)).toContainText(`${runId} Low Stock Fries`);
 
+    const burgerRow = rows.filter({ hasText: `${runId} Burger` }).first();
     const lowRow = rows.filter({ hasText: `${runId} Low Stock Fries` }).first();
-    await lowRow.click();
-    await lowRow.getByTestId("workspace-menu-reorder-up").click();
+    await lowRow
+      .getByTestId("workspace-menu-reorder-handle")
+      .dragTo(burgerRow);
     await expect(rows.nth(0)).toContainText(`${runId} Low Stock Fries`, {
       timeout: 10_000,
     });
@@ -3068,43 +3084,53 @@ async function assertWorkspaceMenuReorder(browser: Browser, token: string) {
       "Workspace Menu reorder should not navigate out of Workspace.",
     );
 
-    let [burger, lowStock] = await Promise.all([
-      prisma.menuItem.findUnique({
-        where: { id: itemAId },
-        select: { sortOrder: true },
-      }),
-      prisma.menuItem.findUnique({
-        where: { id: itemLowId },
-        select: { sortOrder: true },
-      }),
-    ]);
-    assert(
-      lowStock != null &&
-        burger != null &&
-        lowStock.sortOrder < burger.sortOrder,
-      "Workspace Menu reorder should persist the moved item above its sibling.",
-    );
+    await expect
+      .poll(async () => {
+        const [burger, lowStock] = await Promise.all([
+          prisma.menuItem.findUnique({
+            where: { id: itemAId },
+            select: { sortOrder: true },
+          }),
+          prisma.menuItem.findUnique({
+            where: { id: itemLowId },
+            select: { sortOrder: true },
+          }),
+        ]);
+        return Boolean(
+          lowStock != null &&
+            burger != null &&
+            lowStock.sortOrder < burger.sortOrder,
+        );
+      })
+      .toBe(true);
 
-    await lowRow.getByTestId("workspace-menu-reorder-down").click();
+    await rows
+      .filter({ hasText: `${runId} Low Stock Fries` })
+      .first()
+      .getByTestId("workspace-menu-reorder-handle")
+      .dragTo(rows.filter({ hasText: `${runId} Burger` }).first());
     await expect(rows.nth(0)).toContainText(`${runId} Burger`, {
       timeout: 10_000,
     });
-    [burger, lowStock] = await Promise.all([
-      prisma.menuItem.findUnique({
-        where: { id: itemAId },
-        select: { sortOrder: true },
-      }),
-      prisma.menuItem.findUnique({
-        where: { id: itemLowId },
-        select: { sortOrder: true },
-      }),
-    ]);
-    assert(
-      lowStock != null &&
-        burger != null &&
-        burger.sortOrder < lowStock.sortOrder,
-      "Workspace Menu reorder should persist moving the item back down.",
-    );
+    await expect
+      .poll(async () => {
+        const [burger, lowStock] = await Promise.all([
+          prisma.menuItem.findUnique({
+            where: { id: itemAId },
+            select: { sortOrder: true },
+          }),
+          prisma.menuItem.findUnique({
+            where: { id: itemLowId },
+            select: { sortOrder: true },
+          }),
+        ]);
+        return Boolean(
+          lowStock != null &&
+            burger != null &&
+            burger.sortOrder < lowStock.sortOrder,
+        );
+      })
+      .toBe(true);
   } finally {
     await context.close();
   }
@@ -3911,6 +3937,210 @@ async function expectDevicesWidgetForbidden(page: Page) {
     403,
     "Workspace Devices summary should require device-read permission.",
   );
+}
+
+async function openWorkspaceUsersModal(page: Page): Promise<Locator> {
+  const { inlineVisible } = await openWorkspaceMoreMenu(page);
+  const scope = workspaceMoreScope(page, inlineVisible);
+  const action = scope.getByTestId("admin-workspace-more-manage-users");
+  await expect(action).toBeVisible();
+  await action.click();
+  await expect(action).toBeHidden();
+
+  const modal = page.getByTestId("admin-workspace-users-modal");
+  await expect(modal).toBeVisible();
+  const url = new URL(page.url());
+  assert.equal(
+    url.pathname,
+    "/admin/workspace",
+    "Workspace Users modal should stay on the Workspace route.",
+  );
+  assert.equal(
+    url.searchParams.get("modal"),
+    "users",
+    "Workspace Users modal should set modal=users.",
+  );
+  assert.notEqual(
+    url.pathname,
+    "/admin/users",
+    "Workspace Users modal must not navigate to Classic Users.",
+  );
+  return modal;
+}
+
+async function assertWorkspaceUsersModal({
+  browser,
+  ownerToken,
+  adminToken,
+  managerToken,
+}: {
+  browser: Browser;
+  ownerToken: string;
+  adminToken: string;
+  managerToken: string;
+}) {
+  const manager = await newWorkspacePage({
+    browser,
+    token: managerToken,
+    viewport: { width: 1280, height: 900 },
+  });
+  try {
+    const { scope } = await openWorkspaceMoreMenu(manager.page);
+    await expect(
+      scope.getByTestId("admin-workspace-more-manage-users"),
+    ).toHaveCount(0);
+    await manager.page.goto("/admin/workspace?modal=users", {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(
+      manager.page.getByTestId("admin-workspace-users-modal"),
+    ).toHaveCount(0);
+  } finally {
+    await manager.context.close();
+  }
+
+  const admin = await newWorkspacePage({
+    browser,
+    token: adminToken,
+    viewport: { width: 1280, height: 900 },
+  });
+  try {
+    const { scope } = await openWorkspaceMoreMenu(admin.page);
+    await expect(
+      scope.getByTestId("admin-workspace-more-manage-users"),
+    ).toBeVisible();
+  } finally {
+    await admin.context.close();
+  }
+
+  const { context, page } = await newWorkspacePage({
+    browser,
+    token: ownerToken,
+    viewport: { width: 1440, height: 950 },
+  });
+  try {
+    await page.goto("/admin/workspace?modal=users", {
+      waitUntil: "domcontentloaded",
+    });
+    let modal = page.getByTestId("admin-workspace-users-modal");
+    await expect(modal).toBeVisible();
+    await expect(modal).toContainText(userEmails.owner);
+    await expect(modal).toContainText(userEmails.admin);
+    assert.equal(new URL(page.url()).searchParams.get("modal"), "users");
+    await page.getByTestId("admin-workspace-utility-modal-close").click();
+    await expect(modal).toHaveCount(0);
+
+    modal = await openWorkspaceUsersModal(page);
+    await modal.getByTestId("admin-users-create-open").click();
+    const createForm = modal.getByTestId("admin-users-create-inline-form");
+    await expect(createForm).toBeVisible();
+
+    const dirtyEmail = `${runId}-dirty-user@example.test`;
+    await createForm.getByLabel("Email address").fill(dirtyEmail);
+    const dismissedDirtyClose = new Promise<void>((resolve) => {
+      page.once("dialog", async (dialog) => {
+        assert.equal(dialog.type(), "confirm");
+        assert.match(dialog.message(), /Discard unsaved user changes/);
+        await dialog.dismiss();
+        resolve();
+      });
+    });
+    await page.getByTestId("admin-workspace-utility-modal-close").click();
+    await dismissedDirtyClose;
+    await expect(modal).toBeVisible();
+    await expect(createForm.getByLabel("Email address")).toHaveValue(dirtyEmail);
+
+    const createRoute = "**/api/admin/users";
+    await page.route(createRoute, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 428,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Enter your MFA code before this sensitive action.",
+          errorCode: "step_up_required",
+        }),
+      });
+    });
+    await createForm.getByLabel("Display name").fill("Workspace Modal Admin");
+    await createForm.locator('input[type="password"]').fill(`${runId}-Password1!`);
+    await createForm.getByRole("button", { name: /Admin/ }).click();
+    await createForm
+      .getByRole("button", { name: "CREATE USER", exact: true })
+      .click();
+    await expect(modal.getByTestId("admin-users-step-up-inline")).toBeVisible();
+    await expect(createForm.getByLabel("Email address")).toHaveValue(dirtyEmail);
+    await page.unroute(createRoute);
+
+    await page.route(createRoute, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 428,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "MFA enrollment is required before this sensitive action.",
+          errorCode: "mfa_enrollment_required",
+        }),
+      });
+    });
+    await createForm
+      .getByRole("button", { name: "CREATE USER", exact: true })
+      .click();
+    await expect(modal.getByTestId("admin-users-step-up-inline")).toHaveCount(0);
+    await expect(modal.getByTestId("admin-users-inline-error")).toContainText(
+      "Open Security > MFA setup first.",
+    );
+    await expect(createForm.getByLabel("Email address")).toHaveValue(dirtyEmail);
+    await page.unroute(createRoute);
+
+    const createdEmail = `${runId}-modal-admin@example.test`;
+    const capturedPayload: { current: Record<string, unknown> | null } = {
+      current: null,
+    };
+    await page.route(createRoute, async (route) => {
+      if (route.request().method() === "POST") {
+        capturedPayload.current = route.request().postDataJSON() as Record<
+          string,
+          unknown
+        >;
+      }
+      await route.continue();
+    });
+    await createForm.getByLabel("Email address").fill(createdEmail);
+    await createForm
+      .getByRole("button", { name: "CREATE USER", exact: true })
+      .click();
+    await expect(modal.getByText(createdEmail)).toBeVisible();
+    assert(capturedPayload.current, "Workspace users create payload was captured.");
+    assert.equal(capturedPayload.current.email, createdEmail);
+    assert.equal(capturedPayload.current.displayName, "Workspace Modal Admin");
+    assert.equal(capturedPayload.current.accountType, "ADMIN");
+    assert.equal(capturedPayload.current.siteRole, "ADMIN");
+    assert.deepEqual(capturedPayload.current.outletRoles, []);
+    await expect
+      .poll(async () => {
+        const user = await prisma.adminUser.findUnique({
+          where: { email: createdEmail },
+          select: { accountType: true, siteRole: true },
+        });
+        return `${user?.accountType}:${user?.siteRole}`;
+      })
+      .toBe("ADMIN:ADMIN");
+    await page.unroute(createRoute);
+
+    await page.getByTestId("admin-workspace-utility-modal-close").click();
+    await expect(modal).toHaveCount(0);
+    await page.goto("/admin/users", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("Users").first()).toBeVisible();
+  } finally {
+    await context.close();
+  }
 }
 
 async function openWorkspaceDevicesModal(page: Page): Promise<Locator> {
@@ -5108,6 +5338,18 @@ async function main() {
   const browser = await launchSmokeBrowser();
 
   try {
+    if (process.env.ADMIN_WORKSPACE_BROWSER_SMOKE_ONLY === "users") {
+      await assertWorkspaceUsersModal({
+        browser,
+        ownerToken: fixture.tokens.owner,
+        adminToken: fixture.tokens.admin,
+        managerToken: fixture.tokens.manager,
+      });
+      console.log("- workspace users modal smoke passed");
+      console.log("Admin workspace browser smoke passed.");
+      return;
+    }
+
     if (process.env.ADMIN_WORKSPACE_BROWSER_SMOKE_ONLY === "devices") {
       await assertWorkspaceDevicesActions({
         browser,
