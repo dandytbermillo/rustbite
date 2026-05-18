@@ -58,6 +58,7 @@ model Outlet {
   slug                                   String
   orderPrefix                            String
   isActive                               Boolean                                  @default(true)
+  isSynthetic                            Boolean                                  @default(false)
   categories                             Category[]
   menuItems                              MenuItem[]
   orders                                 Order[]
@@ -84,6 +85,7 @@ model Outlet {
   @@unique([siteId, orderPrefix])
   @@index([siteId])
   @@index([isActive])
+  @@index([isSynthetic])
 }
 
 model OutletSettings {
@@ -814,6 +816,7 @@ model Device {
   isSharedAcrossOutlets Boolean              @default(false)
   secretHash            String
   isActive              Boolean              @default(true)
+  isSynthetic           Boolean              @default(false)
   lastSeenAt            DateTime?
   lastIpHash            String?
   lastUserAgent         String?
@@ -827,6 +830,7 @@ model Device {
   @@index([outletId])
   @@index([role])
   @@index([isActive])
+  @@index([isSynthetic])
 }
 
 model DeviceOutletAccess {

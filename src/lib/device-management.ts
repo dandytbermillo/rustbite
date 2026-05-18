@@ -1,5 +1,6 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
+import { syntheticExcludeWhere } from "@/lib/observability/synthetic-fixtures";
 import { prisma } from "@/lib/db";
 import {
   hashAdminPassword,
@@ -119,6 +120,7 @@ export async function validateDeviceAssignment(input: {
       where: {
         id: { in: input.sharedOutletIds },
         isActive: true,
+        ...syntheticExcludeWhere(),
       },
     });
     if (count !== input.sharedOutletIds.length) {
@@ -143,6 +145,7 @@ export async function validateDeviceAssignment(input: {
     where: {
       id: input.outletId,
       isActive: true,
+      ...syntheticExcludeWhere(),
     },
     select: { id: true },
   });
@@ -162,6 +165,7 @@ export async function validateDeviceAssignment(input: {
 
 export async function listDevices(): Promise<DeviceRow[]> {
   const devices = await prisma.device.findMany({
+    where: syntheticExcludeWhere(),
     orderBy: [{ createdAt: "asc" }],
     include: {
       outlet: {

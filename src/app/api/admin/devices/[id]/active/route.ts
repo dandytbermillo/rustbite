@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { syntheticByIdNotFound } from "@/lib/observability/synthetic-route-guard";
 import {
   getAdminSessionFromRequest,
   requireAdminApiPermission,
@@ -45,6 +46,9 @@ export async function POST(
   if (!existing) {
     return NextResponse.json({ error: "Device not found" }, { status: 404 });
   }
+  // Covers disable too, which otherwise skips validation entirely.
+  const syntheticBlocked = syntheticByIdNotFound(existing);
+  if (syntheticBlocked) return syntheticBlocked;
 
   let body: unknown;
   try {

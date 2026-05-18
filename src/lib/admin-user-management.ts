@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { syntheticExcludeWhere } from "@/lib/observability/synthetic-fixtures";
 import {
   ADMIN_PASSWORD_MAX_LENGTH,
   ADMIN_PASSWORD_MIN_LENGTH,
@@ -162,7 +163,7 @@ export function passwordPolicyText() {
 
 export async function listAdminOutlets(): Promise<AdminOutletRow[]> {
   return prisma.outlet.findMany({
-    where: { isActive: true },
+    where: { isActive: true, ...syntheticExcludeWhere() },
     orderBy: [{ name: "asc" }],
     select: { id: true, name: true, slug: true },
   });
@@ -261,7 +262,7 @@ export async function assertKnownOutletRoles(
   if (outletIds.length === 0) return { ok: true };
 
   const count = await prisma.outlet.count({
-    where: { id: { in: outletIds }, isActive: true },
+    where: { id: { in: outletIds }, isActive: true, ...syntheticExcludeWhere() },
   });
   if (count !== outletIds.length) {
     return { ok: false, error: "One or more outlets are invalid" };

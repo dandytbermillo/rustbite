@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { syntheticByIdNotFound } from "@/lib/observability/synthetic-route-guard";
 import {
   getAdminSessionFromRequest,
   requireAdminApiPermission,
@@ -40,11 +41,14 @@ export async function POST(
       id: true,
       name: true,
       outletId: true,
+      isSynthetic: true,
     },
   });
   if (!existing) {
     return NextResponse.json({ error: "Device not found" }, { status: 404 });
   }
+  const syntheticBlocked = syntheticByIdNotFound(existing);
+  if (syntheticBlocked) return syntheticBlocked;
 
   const stepUpError = await requireFreshAdminStepUp(req);
   if (stepUpError) return stepUpError;

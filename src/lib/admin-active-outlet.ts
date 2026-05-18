@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db";
+import { syntheticExcludeWhere } from "@/lib/observability/synthetic-fixtures";
 import type { AdminSessionActor } from "@/lib/admin-sessions";
 import { DEFAULT_OUTLET_ID } from "@/lib/outlets";
 
@@ -43,7 +44,7 @@ export function displayActiveRole(role: string): string {
 
 async function findActiveOutlet(outletId: string) {
   return prisma.outlet.findFirst({
-    where: { id: outletId, isActive: true },
+    where: { id: outletId, isActive: true, ...syntheticExcludeWhere() },
     select: { id: true, name: true },
   });
 }
