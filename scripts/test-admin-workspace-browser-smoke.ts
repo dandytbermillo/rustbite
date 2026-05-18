@@ -880,6 +880,234 @@ async function newWorkspacePage({
   return { context, page };
 }
 
+async function assertWorkspaceFullscreenPreference(
+  browser: Browser,
+  token: string,
+) {
+  const installOrientationMock = async (page: Page) => {
+    await page.evaluate(`
+      (() => {
+        const lockOrientation = async (nextOrientation) => {
+          window.__workspaceFullscreenLock = nextOrientation;
+        };
+        const unlockOrientation = () => {
+          window.__workspaceFullscreenUnlocked = true;
+        };
+        const orientation = window.screen.orientation;
+        if (orientation) {
+          Object.defineProperty(orientation, "lock", {
+            configurable: true,
+            value: lockOrientation,
+          });
+          Object.defineProperty(orientation, "unlock", {
+            configurable: true,
+            value: unlockOrientation,
+          });
+        }
+        if ("ScreenOrientation" in window) {
+          Object.defineProperty(ScreenOrientation.prototype, "lock", {
+            configurable: true,
+            value: lockOrientation,
+          });
+          Object.defineProperty(ScreenOrientation.prototype, "unlock", {
+            configurable: true,
+            value: unlockOrientation,
+          });
+        }
+      })()
+    `);
+  };
+  const context = await browser.newContext({
+    baseURL: baseUrl,
+    viewport: { width: 1280, height: 900 },
+  });
+  await context.addInitScript(() => {
+    let fullscreenElement: Element | null = null;
+    const requestFullscreen = async function requestFullscreen(this: Element) {
+      fullscreenElement = this;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    };
+    const exitFullscreen = async () => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    };
+    Object.defineProperty(Document.prototype, "fullscreenElement", {
+      configurable: true,
+      get() {
+        return fullscreenElement;
+      },
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get() {
+        return fullscreenElement;
+      },
+    });
+    Object.defineProperty(Element.prototype, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(document.documentElement, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(Document.prototype, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreen,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreen,
+    });
+    const lockOrientation = async (nextOrientation: string) => {
+      (window as typeof window & { __workspaceFullscreenLock?: string })
+        .__workspaceFullscreenLock = nextOrientation;
+    };
+    const unlockOrientation = () => {
+      (window as typeof window & { __workspaceFullscreenUnlocked?: boolean })
+        .__workspaceFullscreenUnlocked = true;
+    };
+    const mockedOrientation = {
+      type: "landscape-primary",
+      lock: lockOrientation,
+      unlock: unlockOrientation,
+    };
+    try {
+      Object.defineProperty(window.screen, "orientation", {
+        configurable: true,
+        value: mockedOrientation,
+      });
+    } catch {
+      // Chromium exposes screen.orientation as read-only in some contexts.
+    }
+    const orientation = window.screen.orientation as ScreenOrientation & {
+      lock?: (orientation: string) => Promise<void>;
+      unlock?: () => void;
+    };
+    try {
+      Object.defineProperty(orientation, "lock", {
+        configurable: true,
+        value: lockOrientation,
+      });
+      Object.defineProperty(orientation, "unlock", {
+        configurable: true,
+        value: unlockOrientation,
+      });
+    } catch {
+      // Defining on ScreenOrientation.prototype below still covers Chromium.
+    }
+    if ("ScreenOrientation" in window) {
+      Object.defineProperty(ScreenOrientation.prototype, "lock", {
+        configurable: true,
+        value: lockOrientation,
+      });
+      Object.defineProperty(ScreenOrientation.prototype, "unlock", {
+        configurable: true,
+        value: unlockOrientation,
+      });
+    }
+  });
+  await context.addCookies([
+    {
+      name: ADMIN_SESSION_COOKIE,
+      value: token,
+      url: baseUrl,
+      httpOnly: true,
+      sameSite: "Strict",
+    },
+    {
+      name: ADMIN_ACTIVE_OUTLET_COOKIE,
+      value: outletAId,
+      url: baseUrl,
+      httpOnly: true,
+      sameSite: "Strict",
+    },
+  ]);
+
+  const page = await context.newPage();
+  try {
+    await page.goto("/admin/workspace", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
+    await installOrientationMock(page);
+    const fullscreenButton = page.getByTestId("admin-fullscreen-toggle");
+    await expect(fullscreenButton).toContainText("Fullscreen");
+
+    await fullscreenButton.click();
+    await expect(fullscreenButton).toContainText("Exit");
+    let preference = await page.evaluate(() => {
+      const raw = window.localStorage.getItem(
+        "rushbite:admin-fullscreen-preference:v1",
+      );
+      return raw ? JSON.parse(raw) : null;
+    });
+    assert.equal(
+      preference?.desiredFullscreen,
+      true,
+      "Entering fullscreen should persist the user's fullscreen preference.",
+    );
+    assert.equal(
+      preference?.orientation,
+      "landscape",
+      "Entering fullscreen should remember the current screen orientation.",
+    );
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(
+            () =>
+              (window as typeof window & { __workspaceFullscreenLock?: string })
+                .__workspaceFullscreenLock,
+          ),
+        {
+          message:
+            "Entering fullscreen should try to lock the remembered orientation.",
+        },
+      )
+      .toBe("landscape");
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await installOrientationMock(page);
+    await expect(page.getByTestId("admin-fullscreen-toggle")).toContainText(
+      "Resume fullscreen",
+    );
+    await page.getByTestId("admin-fullscreen-toggle").click();
+    await expect(page.getByTestId("admin-fullscreen-toggle")).toContainText(
+      "Exit",
+    );
+    await page.getByTestId("admin-fullscreen-toggle").click();
+    await expect(page.getByTestId("admin-fullscreen-toggle")).toContainText(
+      "Fullscreen",
+    );
+    preference = await page.evaluate(() => {
+      const raw = window.localStorage.getItem(
+        "rushbite:admin-fullscreen-preference:v1",
+      );
+      return raw ? JSON.parse(raw) : null;
+    });
+    assert.equal(
+      preference?.desiredFullscreen,
+      false,
+      "Exiting fullscreen should clear the resume preference.",
+    );
+    assert.equal(
+      await page.evaluate(
+        () =>
+          (window as typeof window & {
+            __workspaceFullscreenUnlocked?: boolean;
+          }).__workspaceFullscreenUnlocked,
+      ),
+      true,
+      "Exiting fullscreen should unlock the orientation when supported.",
+    );
+  } finally {
+    await context.close();
+  }
+}
+
 async function expectWorkspaceChrome({
   page,
   role,
@@ -5361,6 +5589,13 @@ async function main() {
       return;
     }
 
+    if (process.env.ADMIN_WORKSPACE_BROWSER_SMOKE_ONLY === "fullscreen") {
+      await assertWorkspaceFullscreenPreference(browser, fixture.tokens.owner);
+      console.log("- workspace fullscreen preference smoke passed");
+      console.log("Admin workspace browser smoke passed.");
+      return;
+    }
+
     await assertRoleWorkspace({
       browser,
       role: "owner",
@@ -5400,6 +5635,9 @@ async function main() {
 
     await assertModeSwitchAndDeepLinks(browser, fixture.tokens.owner);
     console.log("- workspace mode switch and deep-link smoke passed");
+
+    await assertWorkspaceFullscreenPreference(browser, fixture.tokens.owner);
+    console.log("- workspace fullscreen preference smoke passed");
 
     await assertRoleWorkspace({
       browser,

@@ -1152,7 +1152,7 @@ function MenuRow({
   ) => void;
   onOpenAddOns: (row: WorkspaceMenuItemRow) => void;
   onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
-  onDragEnd: () => void;
+  onDragEnd: (event: DragEvent<HTMLButtonElement>) => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
 }) {
@@ -1170,6 +1170,8 @@ function MenuRow({
   return (
     <div
       data-testid={target ? "workspace-menu-target-row" : "workspace-menu-row"}
+      data-workspace-menu-category-id={row.categoryId}
+      data-workspace-menu-item-id={row.id}
       aria-current={target ? "true" : undefined}
       onDragOver={onDragOver}
       onDrop={onDrop}
@@ -1810,6 +1812,7 @@ export default function AdminWorkspaceMenuWidget({
     Map<string, string[]>
   >(() => new Map());
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const draggedItemIdRef = useRef<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     categoryId: string;
     itemId: string;
@@ -1884,6 +1887,7 @@ export default function AdminWorkspaceMenuWidget({
   }
 
   function clearReorderDragState() {
+    draggedItemIdRef.current = null;
     setDraggedItemId(null);
     setDropTarget(null);
   }
@@ -4523,14 +4527,70 @@ export default function AdminWorkspaceMenuWidget({
                               event.preventDefault();
                               return;
                             }
+                            draggedItemIdRef.current = row.id;
                             setDraggedItemId(row.id);
                             event.dataTransfer.effectAllowed = "move";
                             event.dataTransfer.setData("text/plain", row.id);
                           }}
-                          onDragEnd={clearReorderDragState}
+                          onDragEnd={(event) => {
+                            const activeDraggedItemId = draggedItemIdRef.current;
+                            const pointerTargetElement = document.elementFromPoint(
+                              event.clientX,
+                              event.clientY,
+                            );
+                            const pointerTargetRow =
+                              pointerTargetElement?.closest<HTMLElement>(
+                                "[data-workspace-menu-item-id]",
+                              );
+                            const pointerTargetItemId =
+                              pointerTargetRow?.dataset.workspaceMenuCategoryId ===
+                              section.category.id
+                                ? pointerTargetRow.dataset.workspaceMenuItemId
+                                : null;
+                            if (
+                              categoryOption &&
+                              activeDraggedItemId &&
+                              pointerTargetItemId &&
+                              pointerTargetItemId !== activeDraggedItemId &&
+                              reorderEnabled
+                            ) {
+                              const expectedCurrentOrder = renderedItems.map(
+                                (item) => item.id,
+                              );
+                              const fromIndex = expectedCurrentOrder.indexOf(
+                                activeDraggedItemId,
+                              );
+                              const toIndex =
+                                expectedCurrentOrder.indexOf(pointerTargetItemId);
+                              if (fromIndex >= 0 && toIndex >= 0) {
+                                const orderedItemIds = [...expectedCurrentOrder];
+                                orderedItemIds.splice(fromIndex, 1);
+                                orderedItemIds.splice(
+                                  toIndex,
+                                  0,
+                                  activeDraggedItemId,
+                                );
+                                clearReorderDragState();
+                                void reorderItemsInCategory({
+                                  category: categoryOption,
+                                  rows: renderedItems,
+                                  orderedItemIds,
+                                });
+                                return;
+                              }
+                            }
+                            clearReorderDragState();
+                          }}
                           onDragOver={(event) => {
-                            if (!draggedItemId || !reorderEnabled) return;
-                            if (!renderedItems.some((item) => item.id === draggedItemId)) {
+                            const activeDraggedItemId =
+                              draggedItemIdRef.current ||
+                              event.dataTransfer.getData("text/plain");
+                            if (!activeDraggedItemId || !reorderEnabled) return;
+                            if (
+                              !renderedItems.some(
+                                (item) => item.id === activeDraggedItemId,
+                              )
+                            ) {
                               return;
                             }
                             event.preventDefault();
@@ -4539,14 +4599,22 @@ export default function AdminWorkspaceMenuWidget({
                               dropTarget?.categoryId !== section.category.id ||
                               dropTarget.itemId !== row.id
                             ) {
-                              setDropTarget({
+                              const nextDropTarget = {
                                 categoryId: section.category.id,
                                 itemId: row.id,
-                              });
+                              };
+                              setDropTarget(nextDropTarget);
                             }
                           }}
                           onDrop={(event) => {
-                            if (!categoryOption || !draggedItemId || !reorderEnabled) {
+                            const activeDraggedItemId =
+                              draggedItemIdRef.current ||
+                              event.dataTransfer.getData("text/plain");
+                            if (
+                              !categoryOption ||
+                              !activeDraggedItemId ||
+                              !reorderEnabled
+                            ) {
                               clearReorderDragState();
                               return;
                             }
@@ -4555,20 +4623,20 @@ export default function AdminWorkspaceMenuWidget({
                               (item) => item.id,
                             );
                             const fromIndex = expectedCurrentOrder.indexOf(
-                              draggedItemId,
+                              activeDraggedItemId,
                             );
                             const toIndex = expectedCurrentOrder.indexOf(row.id);
                             if (
                               fromIndex < 0 ||
                               toIndex < 0 ||
-                              draggedItemId === row.id
+                              activeDraggedItemId === row.id
                             ) {
                               clearReorderDragState();
                               return;
                             }
                             const orderedItemIds = [...expectedCurrentOrder];
                             orderedItemIds.splice(fromIndex, 1);
-                            orderedItemIds.splice(toIndex, 0, draggedItemId);
+                            orderedItemIds.splice(toIndex, 0, activeDraggedItemId);
                             clearReorderDragState();
                             void reorderItemsInCategory({
                               category: categoryOption,
