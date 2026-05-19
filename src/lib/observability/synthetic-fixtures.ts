@@ -25,6 +25,18 @@ export function syntheticOnlyWhere(): { isSynthetic: true } {
 }
 
 /**
+ * Relation form for Order/Payment/Menu/Category/etc. queries that have NO
+ * `isSynthetic` column of their own but relate to an outlet. Excludes rows
+ * whose outlet is the synthetic fixture. Same predicate family as
+ * `syntheticExcludeWhere()` — do not hand-roll the join per query.
+ */
+export function syntheticOutletRelationExclude(): {
+  outlet: { isSynthetic: false };
+} {
+  return { outlet: { isSynthetic: false } };
+}
+
+/**
  * True if a fetched Outlet/Device row is the synthetic fixture. Used by the
  * shared by-id admin mutation guard. Checks the flag first; the id fallback
  * is belt-and-suspenders for callers whose `select` omitted `isSynthetic`.

@@ -18,6 +18,7 @@
     "test:sync-outbox-phase1": "npx tsx scripts/test-sync-outbox-phase1.ts",
     "test:sync-outbox-dispatcher": "npx tsx scripts/test-sync-outbox-dispatcher.ts",
     "test:observability-investigation-mode": "npx tsx scripts/test-observability-investigation-mode.ts",
+    "test:observability-synthetic-kpi-exclusion": "npx tsx scripts/test-observability-synthetic-kpi-exclusion.ts",
     "test:observability-synthetic-fixtures": "npx tsx scripts/test-observability-synthetic-fixtures.ts",
     "test:observability-synthetic-monitor-token": "npx tsx scripts/test-observability-synthetic-monitor-token.ts",
     "test:admin-rbac-active-outlet": "npx tsx scripts/test-admin-rbac-active-outlet.ts",

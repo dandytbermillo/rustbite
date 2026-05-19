@@ -1,5 +1,6 @@
 import "server-only";
 import type { PrismaClient } from "@prisma/client";
+import { syntheticExcludeWhere } from "@/lib/observability/synthetic-fixtures";
 
 // Phase 3 deployment pre-flight — pure logic.
 //
@@ -62,6 +63,7 @@ export async function runActiveOperatorPreflight(
     where: {
       isActive: true,
       role: { in: ["counter", "kitchen"] },
+      ...syntheticExcludeWhere(),
     },
     include: {
       outlet: { select: { id: true, name: true } },

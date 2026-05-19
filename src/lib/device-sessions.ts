@@ -2,6 +2,10 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import {
+  isSyntheticRow,
+  syntheticExcludeWhere,
+} from "@/lib/observability/synthetic-fixtures";
+import {
   buildDatabaseDeviceSessionValue,
   buildLegacyDeviceSessionValue,
   DEVICE_SESSION_COOKIE,
@@ -228,6 +232,7 @@ export async function authenticateDatabaseDevice(
     where: {
       role,
       isActive: true,
+      ...syntheticExcludeWhere(),
     },
     select: {
       id: true,
@@ -319,6 +324,11 @@ async function getDatabaseDeviceSessionActor(
 
   if (!session || session.revokedAt || session.expiresAt <= now) return null;
   if (!session.device.isActive || !isDeviceRole(session.device.role)) return null;
+  // Fail-closed: synthetic devices must never authorize via normal device
+  // auth — covers EXISTING sessions, not just new logins (before lastSeenAt
+  // is touched). The future authenticated synthetic kiosk-menu check must
+  // use a separate read-only mechanism; do NOT re-enable synthetic here.
+  if (isSyntheticRow(session.device)) return null;
 
   const allowedOutletIds = session.device.isSharedAcrossOutlets
     ? session.device.outletAccess

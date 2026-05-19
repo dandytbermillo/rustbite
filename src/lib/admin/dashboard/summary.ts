@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db";
+import { syntheticExcludeWhere } from "@/lib/observability/synthetic-fixtures";
 import {
   adminActorHasPermission,
   type AdminPermissionContext,
@@ -479,6 +480,7 @@ async function buildDeviceFleet({
 }): Promise<DashboardDeviceFleet> {
   const devices = await prisma.device.findMany({
     where: {
+      ...syntheticExcludeWhere(),
       OR: [
         { outletId },
         { outletAccess: { some: { outletId } } },
