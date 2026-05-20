@@ -1191,6 +1191,14 @@ async function assertWorkspaceMenuToolbarManualHide(
     await expectToolbarSlotClass("max-h-0");
     await expectToolbarToggleText("Show toolbar");
 
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
+    await expect(
+      page.getByTestId("admin-workspace-widget-menu"),
+    ).toHaveAttribute("data-active", "true");
+    await expectToolbarSlotClass("max-h-0");
+    await expectToolbarToggleText("Show toolbar");
+
     await page.getByTestId("workspace-menu-real-data").evaluate((element) => {
       element.scrollTo({ top: 800 });
     });
@@ -1206,6 +1214,14 @@ async function assertWorkspaceMenuToolbarManualHide(
     await expectToolbarToggleText("Show toolbar");
 
     await page.getByTestId("workspace-menu-summon-toolbar").click();
+    await expectToolbarSlotClass("max-h-[480px]");
+    await expectToolbarToggleText("Hide toolbar");
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
+    await expect(
+      page.getByTestId("admin-workspace-widget-menu"),
+    ).toHaveAttribute("data-active", "true");
     await expectToolbarSlotClass("max-h-[480px]");
     await expectToolbarToggleText("Hide toolbar");
 

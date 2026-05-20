@@ -98,6 +98,7 @@ function signalIcon(id: WorkspaceSystemStatusSignal["id"]): LucideIcon {
   if (id === "database") return Database;
   if (id === "external-monitor") return MonitorCheck;
   if (id === "devices") return Smartphone;
+  if (id === "kiosk-client") return MonitorCheck;
   if (id === "orders") return ReceiptText;
   if (id === "payments") return ShieldCheck;
   if (id === "performance") return Clock3;

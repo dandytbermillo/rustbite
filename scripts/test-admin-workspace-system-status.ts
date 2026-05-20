@@ -6,7 +6,11 @@ import type {
 } from "@/lib/admin/dashboard/summary";
 import type { AdminWorkspaceDashboardSummary } from "@/lib/admin/workspace/dashboard-summary";
 import type { AdminWorkspaceDevicesSummary } from "@/lib/admin/workspace/devices-summary";
-import { deriveWorkspaceSystemStatusSummary } from "@/lib/admin/workspace/system-status-model";
+import {
+  deriveWorkspaceSystemStatusSummary,
+  type WorkspaceBusinessHealthSummary,
+} from "@/lib/admin/workspace/system-status-model";
+import type { LocalDeviceClientHealthSummary } from "@/lib/device-client-health-shared";
 import type {
   LocalCriticalRouteTimingSummary,
   LocalServerIssueSummary,
@@ -176,6 +180,66 @@ function devicesSummaryWithFleet(
   });
 }
 
+function businessHealth(
+  overrides: Partial<
+    Extract<WorkspaceBusinessHealthSummary, { source: "database" }>
+  > = {},
+): WorkspaceBusinessHealthSummary {
+  return {
+    source: "database",
+    windowMinutes: 30,
+    generatedAt,
+    orderCount: 4,
+    successfulOrderCount: 4,
+    paymentAttemptCount: 10,
+    successfulPaymentCount: 10,
+    failedPaymentCount: 0,
+    pendingPaymentCount: 0,
+    oldestPendingPaymentAgeMinutes: null,
+    latestOrderAt: generatedAt,
+    latestPaymentAt: generatedAt,
+    ...overrides,
+  };
+}
+
+function unavailableBusinessHealth(
+  reason: Extract<
+    WorkspaceBusinessHealthSummary,
+    { source: "unavailable" }
+  >["reason"] = "query_failed",
+): WorkspaceBusinessHealthSummary {
+  return {
+    source: "unavailable",
+    windowMinutes: 30,
+    generatedAt,
+    reason,
+  };
+}
+
+function kioskClientHealth(
+  overrides: Partial<LocalDeviceClientHealthSummary> = {},
+): LocalDeviceClientHealthSummary {
+  return {
+    source: "local-memory",
+    windowMinutes: 15,
+    totalCount: 3,
+    latestAt: generatedAt,
+    latestDeviceId: "device-1",
+    latestDeviceName: "KIOSK 01",
+    latestEvent: "menu_loaded",
+    appLoadedCount: 1,
+    heartbeatCount: 1,
+    menuLoadedCount: 1,
+    menuFailedCount: 0,
+    errorCount: 0,
+    unhandledRejectionCount: 0,
+    checkoutStartedCount: 0,
+    checkoutCompletedCount: 0,
+    checkoutSlowCount: 0,
+    ...overrides,
+  };
+}
+
 function serverIssues(
   overrides: Partial<LocalServerIssueSummary> = {},
 ): LocalServerIssueSummary {
@@ -287,6 +351,8 @@ function derive(opts: {
   uptimeChecks?: ObservabilityUptimeCheckSnapshot[];
   serverIssues?: LocalServerIssueSummary | null;
   routePerformance?: LocalCriticalRouteTimingSummary | null;
+  businessHealth?: WorkspaceBusinessHealthSummary | null;
+  kioskClientHealth?: LocalDeviceClientHealthSummary | null;
   canViewOperatorDetail?: boolean;
 }) {
   return deriveWorkspaceSystemStatusSummary({
@@ -302,6 +368,14 @@ function derive(opts: {
       opts.serverIssues === undefined ? null : opts.serverIssues,
     routePerformance:
       opts.routePerformance === undefined ? null : opts.routePerformance,
+    businessHealth:
+      opts.businessHealth === undefined
+        ? businessHealth()
+        : opts.businessHealth,
+    kioskClientHealth:
+      opts.kioskClientHealth === undefined
+        ? kioskClientHealth()
+        : opts.kioskClientHealth,
     canViewOperatorDetail: opts.canViewOperatorDetail ?? false,
   });
 }
@@ -733,6 +807,76 @@ function main() {
     "quiet-hours no-online-kiosk should be lowered rather than action_needed",
   );
 
+  const noKioskClientEvents = derive({
+    kioskClientHealth: kioskClientHealth({
+      totalCount: 0,
+      latestAt: null,
+      latestDeviceId: null,
+      latestDeviceName: null,
+      latestEvent: null,
+      appLoadedCount: 0,
+      heartbeatCount: 0,
+      menuLoadedCount: 0,
+    }),
+  });
+  assert.equal(
+    noKioskClientEvents.signals.find(
+      (signal) => signal.id === "kiosk-client",
+    )?.state,
+    "unknown",
+    "missing kiosk client-health events should not be treated as healthy",
+  );
+
+  const kioskMenuFailure = derive({
+    kioskClientHealth: kioskClientHealth({
+      latestEvent: "menu_failed",
+      menuLoadedCount: 0,
+      menuFailedCount: 1,
+    }),
+  });
+  assert.equal(
+    kioskMenuFailure.signals.find((signal) => signal.id === "kiosk-client")
+      ?.state,
+    "action_needed",
+    "kiosk menu-load failures should be action_needed",
+  );
+
+  const repeatedKioskErrors = derive({
+    kioskClientHealth: kioskClientHealth({
+      latestEvent: "unhandled_rejection",
+      errorCount: 3,
+      unhandledRejectionCount: 2,
+    }),
+  });
+  assert.equal(
+    repeatedKioskErrors.signals.find((signal) => signal.id === "kiosk-client")
+      ?.state,
+    "action_needed",
+    "repeated kiosk browser error buckets should be action_needed",
+  );
+
+  const slowKioskCheckout = derive({
+    kioskClientHealth: kioskClientHealth({
+      latestEvent: "checkout_completed",
+      checkoutCompletedCount: 4,
+      checkoutSlowCount: 2,
+    }),
+  });
+  assert.equal(
+    slowKioskCheckout.signals.find((signal) => signal.id === "kiosk-client")
+      ?.state,
+    "degraded",
+    "repeated slow kiosk checkout buckets should degrade kiosk browser health",
+  );
+
+  const healthyKioskClient = derive({});
+  assert.equal(
+    healthyKioskClient.signals.find((signal) => signal.id === "kiosk-client")
+      ?.state,
+    "ready",
+    "menu-loaded kiosk client-health events should make the kiosk browser signal ready",
+  );
+
   const lateOrders = derive({
     dashboard: dashboardSummary({
       operationBuckets: {
@@ -756,6 +900,158 @@ function main() {
     lateOrders.overall.state,
     "degraded",
     "a degraded signal should make the overall Workspace status degraded when no higher-priority action is needed",
+  );
+
+  const noRecentOrdersDuringBusiness = derive({
+    dashboard: dashboardSummary({
+      operations: {
+        awaitingCounterPayment: 0,
+        paid: 0,
+        inKitchen: 0,
+        ready: 0,
+      },
+    }),
+    businessHealth: businessHealth({
+      orderCount: 0,
+      successfulOrderCount: 0,
+      latestOrderAt: null,
+    }),
+  });
+  assert.equal(
+    noRecentOrdersDuringBusiness.signals.find(
+      (signal) => signal.id === "orders",
+    )?.state,
+    "unknown",
+    "no recent orders during business hours should not be shown as healthy",
+  );
+  assert.match(
+    noRecentOrdersDuringBusiness.signals.find(
+      (signal) => signal.id === "orders",
+    )?.detail ?? "",
+    /No recent orders/,
+  );
+
+  const noRecentOrdersDuringQuietHours = derive({
+    dashboard: dashboardSummary({
+      generatedAt: "2026-05-19T06:00:00.000Z",
+      operations: {
+        awaitingCounterPayment: 0,
+        paid: 0,
+        inKitchen: 0,
+        ready: 0,
+      },
+    }),
+    devices: devicesSummary({ generatedAt: "2026-05-19T06:00:00.000Z" }),
+    businessHealth: businessHealth({
+      generatedAt: "2026-05-19T06:00:00.000Z",
+      orderCount: 0,
+      successfulOrderCount: 0,
+      latestOrderAt: null,
+    }),
+  });
+  assert.equal(
+    noRecentOrdersDuringQuietHours.signals.find(
+      (signal) => signal.id === "orders",
+    )?.state,
+    "ready",
+    "quiet hours should suppress no-recent-order volume warnings",
+  );
+
+  const lowVolumePaymentFailures = derive({
+    businessHealth: businessHealth({
+      paymentAttemptCount: 4,
+      successfulPaymentCount: 0,
+      failedPaymentCount: 4,
+      latestPaymentAt: generatedAt,
+    }),
+  });
+  assert.equal(
+    lowVolumePaymentFailures.signals.find(
+      (signal) => signal.id === "payments",
+    )?.state,
+    "action_needed",
+    "absolute failed-payment counts should catch low-volume payment failure spikes",
+  );
+
+  const quietHoursPaymentFailures = derive({
+    businessHealth: businessHealth({
+      generatedAt: "2026-05-19T06:00:00.000Z",
+      paymentAttemptCount: 4,
+      successfulPaymentCount: 0,
+      failedPaymentCount: 4,
+      latestPaymentAt: "2026-05-19T06:00:00.000Z",
+    }),
+  });
+  assert.equal(
+    quietHoursPaymentFailures.signals.find(
+      (signal) => signal.id === "payments",
+    )?.state,
+    "action_needed",
+    "payment failure spikes should still escalate during quiet hours",
+  );
+
+  const repeatedPaymentFailures = derive({
+    businessHealth: businessHealth({
+      paymentAttemptCount: 10,
+      successfulPaymentCount: 7,
+      failedPaymentCount: 3,
+      latestPaymentAt: generatedAt,
+    }),
+  });
+  assert.equal(
+    repeatedPaymentFailures.signals.find((signal) => signal.id === "payments")
+      ?.state,
+    "degraded",
+    "failure rate should degrade payments after enough payment attempts",
+  );
+
+  const oldPendingPayment = derive({
+    businessHealth: businessHealth({
+      paymentAttemptCount: 10,
+      successfulPaymentCount: 9,
+      pendingPaymentCount: 1,
+      oldestPendingPaymentAgeMinutes: 12,
+      latestPaymentAt: generatedAt,
+    }),
+  });
+  assert.equal(
+    oldPendingPayment.signals.find((signal) => signal.id === "payments")
+      ?.state,
+    "degraded",
+    "old pending terminal payments should degrade payment status",
+  );
+
+  const insufficientPaymentSamples = derive({
+    businessHealth: businessHealth({
+      paymentAttemptCount: 2,
+      successfulPaymentCount: 2,
+      failedPaymentCount: 0,
+      latestPaymentAt: generatedAt,
+    }),
+  });
+  assert.equal(
+    insufficientPaymentSamples.signals.find(
+      (signal) => signal.id === "payments",
+    )?.state,
+    "unknown",
+    "payment success should not be shown as healthy without enough samples during business hours",
+  );
+
+  const unavailableBusinessSummary = derive({
+    businessHealth: unavailableBusinessHealth(),
+  });
+  assert.equal(
+    unavailableBusinessSummary.signals.find((signal) => signal.id === "orders")
+      ?.state,
+    "unknown",
+    "unavailable business-health source should keep order status unknown",
+  );
+  assert.equal(
+    unavailableBusinessSummary.signals.find(
+      (signal) => signal.id === "payments",
+    )?.state,
+    "unknown",
+    "unavailable business-health source should keep payment status unknown",
   );
 
   const repeatedServerErrors = derive({

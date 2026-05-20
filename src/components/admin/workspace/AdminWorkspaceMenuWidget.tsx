@@ -62,10 +62,14 @@ import {
   validateCategoryInput,
   validateItemInput,
 } from "@/lib/menu-admin";
+import {
+  readWorkspaceMenuToolbarPreference,
+  workspaceMenuToolbarStorage,
+  writeWorkspaceMenuToolbarPreference,
+  type WorkspaceMenuToolbarMode,
+} from "@/lib/admin/workspace/menu-toolbar-preference";
 
 const WORKSPACE_MENU_REFRESH_MS = 30_000;
-
-type MenuToolbarMode = "auto" | "open" | "hidden";
 
 export type AdminWorkspaceMenuFocusRequest = {
   id: number;
@@ -1871,10 +1875,25 @@ export default function AdminWorkspaceMenuWidget({
   // hidden/open modes persist until the user clicks Show/Hide again.
   const menuScrollRef = useRef<HTMLDivElement | null>(null);
   const [toolbarScrolledAway, setToolbarScrolledAway] = useState(false);
-  const [toolbarMode, setToolbarMode] = useState<MenuToolbarMode>("auto");
+  const [toolbarMode, setToolbarMode] =
+    useState<WorkspaceMenuToolbarMode>("auto");
   const toolbarOpen =
     toolbarMode === "open" ||
     (toolbarMode === "auto" && !toolbarScrolledAway);
+
+  useEffect(() => {
+    const savedMode = readWorkspaceMenuToolbarPreference(
+      workspaceMenuToolbarStorage(),
+    );
+    if (savedMode) setToolbarMode(savedMode);
+  }, []);
+
+  function setExplicitToolbarMode(
+    nextMode: Exclude<WorkspaceMenuToolbarMode, "auto">,
+  ) {
+    setToolbarMode(nextMode);
+    writeWorkspaceMenuToolbarPreference(workspaceMenuToolbarStorage(), nextMode);
+  }
 
   function setOptimisticOrder(categoryId: string, order: string[] | null) {
     setOptimisticOrderByCategory((current) => {
@@ -4144,7 +4163,7 @@ export default function AdminWorkspaceMenuWidget({
       {/* Floating toolbar toggle — one fixed place for both Hide and Show. */}
       <button
         type="button"
-        onClick={() => setToolbarMode(toolbarOpen ? "hidden" : "open")}
+        onClick={() => setExplicitToolbarMode(toolbarOpen ? "hidden" : "open")}
         aria-label={toolbarOpen ? "Hide menu toolbar" : "Show menu toolbar"}
         aria-expanded={toolbarOpen}
         data-testid="workspace-menu-summon-toolbar"

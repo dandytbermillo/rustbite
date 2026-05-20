@@ -89,6 +89,7 @@ const RAW_CONSOLE_ERROR = console.error.bind(console);
 const STATIC_ROUTE_PATTERNS = new Set([
   "/api/menu",
   "/api/orders",
+  "/api/device-session/client-health",
   "/api/device-session/presence",
   "/api/payments/sessions",
   "/api/observability/test-exception",

@@ -1,5 +1,6 @@
 import type { AdminWorkspaceDashboardSummary } from "@/lib/admin/workspace/dashboard-summary";
 import type { AdminWorkspaceDevicesSummary } from "@/lib/admin/workspace/devices-summary";
+import type { LocalDeviceClientHealthSummary } from "@/lib/device-client-health-shared";
 import { DEFAULT_SITE_TIMEZONE } from "@/lib/outlets";
 import type {
   LocalCriticalRouteTimingGroup,
@@ -19,6 +20,7 @@ export type WorkspaceSystemStatusSignalId =
   | "database"
   | "external-monitor"
   | "devices"
+  | "kiosk-client"
   | "orders"
   | "payments"
   | "performance"
@@ -48,6 +50,8 @@ export type WorkspaceSystemStatusSummary = {
   uptimeChecks: ObservabilityUptimeCheckSnapshot[];
   serverIssues: LocalServerIssueSummary | null;
   routePerformance: LocalCriticalRouteTimingSummary | null;
+  businessHealth: WorkspaceBusinessHealthSummary | null;
+  kioskClientHealth: LocalDeviceClientHealthSummary | null;
   noExternalPushAlerts: true;
   permissions: {
     canViewOperatorDetail: boolean;
@@ -58,6 +62,28 @@ export type WorkspaceSystemStatusSummary = {
   } | null;
 };
 
+export type WorkspaceBusinessHealthSummary =
+  | {
+      source: "database";
+      windowMinutes: number;
+      generatedAt: string;
+      orderCount: number;
+      successfulOrderCount: number;
+      paymentAttemptCount: number;
+      successfulPaymentCount: number;
+      failedPaymentCount: number;
+      pendingPaymentCount: number;
+      oldestPendingPaymentAgeMinutes: number | null;
+      latestOrderAt: string | null;
+      latestPaymentAt: string | null;
+    }
+  | {
+      source: "unavailable";
+      windowMinutes: number;
+      generatedAt: string;
+      reason: "query_failed" | "permission_hidden";
+    };
+
 const STATE_RANK: Record<WorkspaceSystemStatusState, number> = {
   ready: 0,
   unknown: 1,
@@ -66,6 +92,17 @@ const STATE_RANK: Record<WorkspaceSystemStatusState, number> = {
 };
 const PILOT_BUSINESS_START_HOUR = 7;
 const PILOT_BUSINESS_END_HOUR = 22;
+const BUSINESS_HEALTH_MIN_PAYMENT_ATTEMPTS = 10;
+const PAYMENT_FAILURE_DEGRADED_COUNT = 2;
+const PAYMENT_FAILURE_ACTION_COUNT = 4;
+const PAYMENT_FAILURE_DEGRADED_RATIO = 0.25;
+const PAYMENT_FAILURE_ACTION_RATIO = 0.5;
+const PAYMENT_PENDING_DEGRADED_MINUTES = 10;
+const PAYMENT_PENDING_ACTION_MINUTES = 20;
+const KIOSK_CLIENT_ERROR_DEGRADED_COUNT = 1;
+const KIOSK_CLIENT_ERROR_ACTION_COUNT = 3;
+const KIOSK_CHECKOUT_SLOW_DEGRADED_COUNT = 2;
+const KIOSK_CHECKOUT_SLOW_ACTION_COUNT = 4;
 
 type WorkspaceFleetDevice = NonNullable<
   AdminWorkspaceDevicesSummary["deviceFleet"]
@@ -489,9 +526,11 @@ function intakeUnavailableReason({
 function buildOrderSignal({
   dashboardSummary,
   devicesSummary,
+  businessHealth,
 }: {
   dashboardSummary: AdminWorkspaceDashboardSummary;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
+  businessHealth: WorkspaceBusinessHealthSummary | null;
 }): WorkspaceSystemStatusSignal {
   if (!dashboardSummary.operations) {
     return {
@@ -542,6 +581,34 @@ function buildOrderSignal({
     };
   }
 
+  if (businessHealth?.source === "unavailable") {
+    return {
+      id: "orders",
+      label: "Orders",
+      state: "unknown",
+      detail: "Recent order-volume health could not be checked.",
+      nextAction: "Review Orders and database status before trusting intake.",
+      href: "/admin/workspace?widget=orders",
+      lastCheckedAt: businessHealth.generatedAt,
+    };
+  }
+
+  if (
+    businessHealth?.source === "database" &&
+    isPilotBusinessHours(businessHealth.generatedAt) &&
+    businessHealth.orderCount === 0
+  ) {
+    return {
+      id: "orders",
+      label: "Orders",
+      state: "unknown",
+      detail: `No recent orders in the last ${businessHealth.windowMinutes} minutes; order volume needs verification.`,
+      nextAction: "Confirm store demand and run a safe kiosk/menu checkout smoke.",
+      href: "/admin/workspace?widget=orders",
+      lastCheckedAt: businessHealth.latestOrderAt ?? businessHealth.generatedAt,
+    };
+  }
+
   return {
     id: "orders",
     label: "Orders",
@@ -559,9 +626,11 @@ function buildOrderSignal({
 function buildPaymentSignal({
   dashboardSummary,
   devicesSummary,
+  businessHealth,
 }: {
   dashboardSummary: AdminWorkspaceDashboardSummary;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
+  businessHealth: WorkspaceBusinessHealthSummary | null;
 }): WorkspaceSystemStatusSignal {
   if (!dashboardSummary.operations) {
     return {
@@ -600,6 +669,26 @@ function buildPaymentSignal({
     };
   }
 
+  if (businessHealth?.source === "unavailable") {
+    return {
+      id: "payments",
+      label: "Payments",
+      state: "unknown",
+      detail: "Recent payment-success health could not be checked.",
+      nextAction: "Review Orders and database status before trusting payment health.",
+      href: "/admin/workspace?widget=orders&status=AWAITING_COUNTER_PAYMENT",
+      lastCheckedAt: businessHealth.generatedAt,
+    };
+  }
+
+  const paymentHealthSignal = businessHealth?.source === "database"
+    ? buildPaymentBusinessHealthSignal({
+        businessHealth,
+        waiting,
+      })
+    : null;
+  if (paymentHealthSignal) return paymentHealthSignal;
+
   return {
     id: "payments",
     label: "Payments",
@@ -611,6 +700,237 @@ function buildPaymentSignal({
     nextAction: waiting === 0 ? null : "Review the payment queue in Orders.",
     href: "/admin/workspace?widget=orders&status=AWAITING_COUNTER_PAYMENT",
     lastCheckedAt: dashboardSummary.generatedAt,
+  };
+}
+
+function buildPaymentBusinessHealthSignal({
+  businessHealth,
+  waiting,
+}: {
+  businessHealth: Extract<WorkspaceBusinessHealthSummary, { source: "database" }>;
+  waiting: number;
+}): WorkspaceSystemStatusSignal | null {
+  const businessHours = isPilotBusinessHours(businessHealth.generatedAt);
+  const failed = businessHealth.failedPaymentCount;
+  const attempts = businessHealth.paymentAttemptCount;
+  const failureRatio = attempts > 0 ? failed / attempts : 0;
+  const hasEnoughSamples = attempts >= BUSINESS_HEALTH_MIN_PAYMENT_ATTEMPTS;
+  const lastCheckedAt =
+    businessHealth.latestPaymentAt ??
+    businessHealth.latestOrderAt ??
+    businessHealth.generatedAt;
+
+  const failureState = hasEnoughSamples
+    ? failed >= PAYMENT_FAILURE_ACTION_COUNT &&
+      failureRatio >= PAYMENT_FAILURE_ACTION_RATIO
+      ? "action_needed"
+      : failed >= PAYMENT_FAILURE_DEGRADED_COUNT &&
+          failureRatio >= PAYMENT_FAILURE_DEGRADED_RATIO
+        ? "degraded"
+        : null
+    : failed >= PAYMENT_FAILURE_ACTION_COUNT
+      ? "action_needed"
+      : failed >= PAYMENT_FAILURE_DEGRADED_COUNT
+        ? "degraded"
+        : null;
+
+  if (failureState) {
+    return {
+      id: "payments",
+      label: "Payments",
+      state: failureState,
+      detail: `${failed} of ${attempts} recent payment attempt${
+        attempts === 1 ? "" : "s"
+      } failed in the last ${businessHealth.windowMinutes} minutes.`,
+      nextAction:
+        failureState === "action_needed"
+          ? "Check payment provider status and recent failed orders now."
+          : "Review recent failed payments before the issue repeats.",
+      href: "/admin/workspace?widget=orders",
+      lastCheckedAt,
+    };
+  }
+
+  const pendingAge = businessHealth.oldestPendingPaymentAgeMinutes;
+  if (
+    pendingAge !== null &&
+    pendingAge >= PAYMENT_PENDING_DEGRADED_MINUTES
+  ) {
+    const state: WorkspaceSystemStatusState =
+      pendingAge >= PAYMENT_PENDING_ACTION_MINUTES
+        ? "action_needed"
+        : "degraded";
+    return {
+      id: "payments",
+      label: "Payments",
+      state,
+      detail: `${businessHealth.pendingPaymentCount} payment attempt${
+        businessHealth.pendingPaymentCount === 1 ? " is" : "s are"
+      } still pending; oldest is ${pendingAge} minutes old.`,
+      nextAction:
+        state === "action_needed"
+          ? "Check the payment terminal/provider flow now."
+          : "Watch the pending payment and confirm it completes or fails cleanly.",
+      href: "/admin/workspace?widget=orders",
+      lastCheckedAt,
+    };
+  }
+
+  if (businessHours && !hasEnoughSamples) {
+    return {
+      id: "payments",
+      label: "Payments",
+      state: "unknown",
+      detail: `${attempts} recent payment attempt${
+        attempts === 1 ? "" : "s"
+      } in the last ${businessHealth.windowMinutes} minutes; not enough to judge payment success rate.`,
+      nextAction:
+        attempts === 0
+          ? "Wait for real traffic or run a safe checkout payment smoke."
+          : "Keep System Status open until more payment attempts are observed.",
+      href: "/admin/workspace?widget=orders",
+      lastCheckedAt,
+    };
+  }
+
+  if (hasEnoughSamples) {
+    return {
+      id: "payments",
+      label: "Payments",
+      state: "ready",
+      detail: `Payment success is within local thresholds over ${attempts} recent attempt${
+        attempts === 1 ? "" : "s"
+      }.`,
+      nextAction:
+        waiting === 0 ? null : "Review the payment queue in Orders.",
+      href: "/admin/workspace?widget=orders&status=AWAITING_COUNTER_PAYMENT",
+      lastCheckedAt,
+    };
+  }
+
+  return null;
+}
+
+function buildKioskClientHealthSignal({
+  generatedAt,
+  kioskClientHealth,
+}: {
+  generatedAt: string;
+  kioskClientHealth: LocalDeviceClientHealthSummary | null;
+}): WorkspaceSystemStatusSignal {
+  if (!kioskClientHealth) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "unknown",
+      detail: "Kiosk client-health events are not connected yet.",
+      nextAction: "Use Devices and kiosk screen checks until client health is wired.",
+      href: "/admin/workspace?modal=devices",
+      lastCheckedAt: generatedAt,
+    };
+  }
+
+  const latestAt = kioskClientHealth.latestAt ?? generatedAt;
+  const deviceName = kioskClientHealth.latestDeviceName ?? "Kiosk";
+
+  if (kioskClientHealth.totalCount === 0) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "unknown",
+      detail: `No kiosk client-health events in the last ${kioskClientHealth.windowMinutes} minutes.`,
+      nextAction: "Open the kiosk and confirm the browser can load the menu.",
+      href: "/admin/workspace?modal=devices",
+      lastCheckedAt: latestAt,
+    };
+  }
+
+  if (kioskClientHealth.menuFailedCount > 0) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "action_needed",
+      detail: `${deviceName} reported a menu load failure.`,
+      nextAction: "Open the kiosk browser and reload the menu before taking orders.",
+      href: "/admin/workspace?modal=devices",
+      lastCheckedAt: latestAt,
+    };
+  }
+
+  if (kioskClientHealth.errorCount >= KIOSK_CLIENT_ERROR_ACTION_COUNT) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "action_needed",
+      detail: `${kioskClientHealth.errorCount} kiosk browser error event${
+        kioskClientHealth.errorCount === 1 ? "" : "s"
+      } in the last ${kioskClientHealth.windowMinutes} minutes.`,
+      nextAction: "Reload the kiosk and review recent browser-safe health events.",
+      href: "/admin/workspace?modal=devices",
+      lastCheckedAt: latestAt,
+    };
+  }
+
+  if (kioskClientHealth.checkoutSlowCount >= KIOSK_CHECKOUT_SLOW_ACTION_COUNT) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "action_needed",
+      detail: `${kioskClientHealth.checkoutSlowCount} kiosk checkout flow${
+        kioskClientHealth.checkoutSlowCount === 1 ? " was" : "s were"
+      } slow in the last ${kioskClientHealth.windowMinutes} minutes.`,
+      nextAction: "Check the kiosk browser and checkout route status now.",
+      href: "/admin/workspace?widget=orders",
+      lastCheckedAt: latestAt,
+    };
+  }
+
+  if (kioskClientHealth.errorCount >= KIOSK_CLIENT_ERROR_DEGRADED_COUNT) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "degraded",
+      detail: `${deviceName} reported a kiosk browser error event.`,
+      nextAction: "Watch the kiosk and reload it if the error repeats.",
+      href: "/admin/workspace?modal=devices",
+      lastCheckedAt: latestAt,
+    };
+  }
+
+  if (kioskClientHealth.checkoutSlowCount >= KIOSK_CHECKOUT_SLOW_DEGRADED_COUNT) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "degraded",
+      detail: `${kioskClientHealth.checkoutSlowCount} kiosk checkout flow${
+        kioskClientHealth.checkoutSlowCount === 1 ? " was" : "s were"
+      } slow in the last ${kioskClientHealth.windowMinutes} minutes.`,
+      nextAction: "Compare with Checkout speed and payment signals.",
+      href: "/admin/workspace?widget=status",
+      lastCheckedAt: latestAt,
+    };
+  }
+
+  if (kioskClientHealth.menuLoadedCount === 0) {
+    return {
+      id: "kiosk-client",
+      label: "Kiosk browser",
+      state: "unknown",
+      detail: "Kiosk browser heartbeat is present, but no menu-loaded event has been seen.",
+      nextAction: "Open the kiosk and confirm the menu is visible.",
+      href: "/admin/workspace?modal=devices",
+      lastCheckedAt: latestAt,
+    };
+  }
+
+  return {
+    id: "kiosk-client",
+    label: "Kiosk browser",
+    state: "ready",
+    detail: `${deviceName} reported kiosk app and menu health.`,
+    nextAction: null,
+    href: "/admin/workspace?modal=devices",
+    lastCheckedAt: latestAt,
   };
 }
 
@@ -843,6 +1163,8 @@ export function deriveWorkspaceSystemStatusSummary({
   uptimeChecks,
   serverIssues = null,
   routePerformance = null,
+  businessHealth = null,
+  kioskClientHealth = null,
   canViewOperatorDetail,
 }: {
   generatedAt: string;
@@ -854,6 +1176,8 @@ export function deriveWorkspaceSystemStatusSummary({
   uptimeChecks: ObservabilityUptimeCheckSnapshot[];
   serverIssues?: LocalServerIssueSummary | null;
   routePerformance?: LocalCriticalRouteTimingSummary | null;
+  businessHealth?: WorkspaceBusinessHealthSummary | null;
+  kioskClientHealth?: LocalDeviceClientHealthSummary | null;
   canViewOperatorDetail: boolean;
 }): WorkspaceSystemStatusSummary {
   const signals: WorkspaceSystemStatusSignal[] = [
@@ -869,8 +1193,9 @@ export function deriveWorkspaceSystemStatusSummary({
     buildDatabaseSignal({ readinessOk, generatedAt }),
     buildExternalMonitorSignal({ uptimeChecks }),
     buildDeviceSignal({ dashboardSummary, devicesSummary }),
-    buildOrderSignal({ dashboardSummary, devicesSummary }),
-    buildPaymentSignal({ dashboardSummary, devicesSummary }),
+    buildKioskClientHealthSignal({ generatedAt, kioskClientHealth }),
+    buildOrderSignal({ dashboardSummary, devicesSummary, businessHealth }),
+    buildPaymentSignal({ dashboardSummary, devicesSummary, businessHealth }),
     buildPerformanceSignal({ generatedAt, routePerformance }),
     buildErrorSignal({ generatedAt, serverIssues }),
   ];
@@ -884,6 +1209,8 @@ export function deriveWorkspaceSystemStatusSummary({
     uptimeChecks,
     serverIssues,
     routePerformance,
+    businessHealth,
+    kioskClientHealth,
     noExternalPushAlerts: true,
     permissions: {
       canViewOperatorDetail,
@@ -894,6 +1221,8 @@ export function deriveWorkspaceSystemStatusSummary({
           sourceNotes: [
             "Health/readiness values come from local endpoints.",
             "Checkout speed uses a bounded local summary of critical menu, order, and payment route timings.",
+            "Order volume and payment success use recent local database counts with minimum-sample safeguards.",
+            "Kiosk browser health uses first-party registered-device events without raw errors, stack traces, user agents, cart contents, customer text, or payment data.",
             "External status is Better Stack check history when configured; no Slack/email/paging/SMS/webhook push alerts are configured in this phase.",
             "Workspace status never includes secrets, raw logs, stack traces, raw headers, raw IPs, or raw user agents.",
           ],

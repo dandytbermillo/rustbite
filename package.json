@@ -29,6 +29,7 @@
     "test:auth-audit-events": "npx tsx scripts/test-auth-audit-events.ts",
     "test:rbac-account-type-migration": "npx tsx scripts/test-rbac-account-type-migration.ts",
     "test:device-active-operator": "npx tsx scripts/test-device-active-operator.ts",
+    "test:device-client-health": "npx tsx scripts/test-device-client-health.ts",
     "test:device-presence": "npx tsx scripts/test-device-presence.ts",
     "test:admin-users-management": "npx tsx scripts/test-admin-users-management.ts",
     "test:non-deal-upgrade-retirement": "npx tsx scripts/test-non-deal-upgrade-retirement.ts",

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ConfirmationScreen from "@/components/kiosk/ConfirmationScreen";
 import CartScreen from "@/components/kiosk/CartScreen";
 import CustomizeScreen from "@/components/kiosk/CustomizeScreen";
+import DeviceClientHealthReporter from "@/components/device/DeviceClientHealthReporter";
 import DevicePresenceReporter from "@/components/device/DevicePresenceReporter";
 import LargeTextToggle from "@/components/kiosk/LargeTextToggle";
 import MenuScreen from "@/components/kiosk/MenuScreen";
@@ -11,6 +12,10 @@ import OrderTypeScreen from "@/components/kiosk/OrderTypeScreen";
 import PaymentScreen from "@/components/kiosk/PaymentScreen";
 import WelcomeScreen from "@/components/kiosk/WelcomeScreen";
 import { BRAND } from "@/lib/brand";
+import {
+  deviceClientHealthDurationBucket,
+  reportDeviceClientHealth,
+} from "@/lib/device-client-health-client";
 import { redirectToDeviceLogin } from "@/lib/device-client-auth";
 import {
   MENU_REVIEW_MESSAGE,
@@ -851,6 +856,8 @@ export default function KioskPage() {
     setCartNotice(null);
     setMenuNotice(null);
     setPayStatus("Preparing payment session…");
+    const checkoutStartedAt = Date.now();
+    reportDeviceClientHealth("checkout_started");
 
     try {
       const displayedTotal = total;
@@ -1007,9 +1014,21 @@ export default function KioskPage() {
       setOrderPaymentMethod(data.paymentMethod);
       setPayStatus(null);
       setScreen("confirmation");
+      reportDeviceClientHealth("checkout_completed", {
+        checkoutOutcome: "completed",
+        durationBucket: deviceClientHealthDurationBucket(
+          Date.now() - checkoutStartedAt,
+        ),
+      });
     } catch (err) {
       setPayStatus(null);
       setPayError((err as Error).message);
+      reportDeviceClientHealth("checkout_completed", {
+        checkoutOutcome: "failed",
+        durationBucket: deviceClientHealthDurationBucket(
+          Date.now() - checkoutStartedAt,
+        ),
+      });
     }
   };
 
@@ -1034,6 +1053,7 @@ export default function KioskPage() {
         className="min-h-screen flex flex-col items-center justify-center p-8 text-center"
         style={{ background: BRAND.cream, color: BRAND.black }}
       >
+        <DeviceClientHealthReporter surface="kiosk" menuState="failed" />
         <div className="text-7xl mb-4">😶</div>
         <div className="display text-4xl mb-3">Can&apos;t load the menu</div>
         <div className="text-sm opacity-70 mb-6">{menuError}</div>
@@ -1054,6 +1074,7 @@ export default function KioskPage() {
         className="min-h-screen flex flex-col items-center justify-center"
         style={{ background: BRAND.cream, color: BRAND.black }}
       >
+        <DeviceClientHealthReporter surface="kiosk" menuState="loading" />
         <div className="text-7xl mb-4 wiggle">🍔</div>
         <div className="display text-3xl tracking-wider">WARMING UP THE GRILL…</div>
         <div className="mt-6 w-10 h-10 border-4 border-current border-t-transparent rounded-full animate-spin opacity-60" />
@@ -1071,6 +1092,7 @@ export default function KioskPage() {
       }}
     >
       <DevicePresenceReporter surface="kiosk" />
+      <DeviceClientHealthReporter surface="kiosk" menuState="loaded" />
       {screen === "welcome" && <WelcomeScreen onStart={() => setScreen("orderType")} />}
 
       {screen === "orderType" && (

@@ -11,6 +11,12 @@ import {
   snapAdminWorkspaceSize,
   type AdminWorkspaceWidgetAccess,
 } from "@/lib/admin/workspace/layout";
+import {
+  WORKSPACE_MENU_TOOLBAR_PREFERENCE_STORAGE_KEY,
+  parseWorkspaceMenuToolbarPreference,
+  readWorkspaceMenuToolbarPreference,
+  writeWorkspaceMenuToolbarPreference,
+} from "@/lib/admin/workspace/menu-toolbar-preference";
 
 // Width/height of a widget that occupies `cells` grid units.
 // Mirrors layout.ts: cells * PANEL_UNIT + (cells-1) * GAP, simplified.
@@ -26,6 +32,34 @@ const access: AdminWorkspaceWidgetAccess[] = [
   { id: "devices", canView: true },
   { id: "menu", canView: false },
 ];
+
+class MemoryStorage {
+  private values = new Map<string, string>();
+
+  getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
+
+  removeItem(key: string) {
+    this.values.delete(key);
+  }
+}
+
+const throwingStorage = {
+  getItem() {
+    throw new Error("storage unavailable");
+  },
+  setItem() {
+    throw new Error("storage unavailable");
+  },
+  removeItem() {
+    throw new Error("storage unavailable");
+  },
+};
 
 function main() {
   const defaultLayout = defaultAdminWorkspaceLayout({
@@ -43,6 +77,53 @@ function main() {
     adminWorkspaceStorageKey("user-1", outletId),
     "rushbite:admin-workspace-layout:user-1:workspace-test-outlet:v2",
     "storage key should be scoped to user and outlet",
+  );
+
+  assert.equal(
+    parseWorkspaceMenuToolbarPreference(
+      JSON.stringify({ version: 1, mode: "hidden" }),
+    ),
+    "hidden",
+    "menu toolbar preference should accept stored hidden mode",
+  );
+  assert.equal(
+    parseWorkspaceMenuToolbarPreference(JSON.stringify({ version: 1, mode: "auto" })),
+    null,
+    "menu toolbar preference should not persist auto mode",
+  );
+  assert.equal(
+    parseWorkspaceMenuToolbarPreference("{not-json"),
+    null,
+    "menu toolbar preference should ignore corrupt storage",
+  );
+
+  const toolbarStorage = new MemoryStorage();
+  writeWorkspaceMenuToolbarPreference(toolbarStorage, "hidden");
+  assert.equal(
+    readWorkspaceMenuToolbarPreference(toolbarStorage),
+    "hidden",
+    "menu toolbar preference should round-trip hidden mode",
+  );
+  writeWorkspaceMenuToolbarPreference(toolbarStorage, "open");
+  assert.equal(
+    readWorkspaceMenuToolbarPreference(toolbarStorage),
+    "open",
+    "menu toolbar preference should round-trip open mode",
+  );
+  writeWorkspaceMenuToolbarPreference(toolbarStorage, "auto");
+  assert.equal(
+    toolbarStorage.getItem(WORKSPACE_MENU_TOOLBAR_PREFERENCE_STORAGE_KEY),
+    null,
+    "menu toolbar auto mode should clear the persisted explicit preference",
+  );
+  assert.equal(
+    readWorkspaceMenuToolbarPreference(throwingStorage),
+    null,
+    "menu toolbar preference read should tolerate storage failures",
+  );
+  assert.doesNotThrow(
+    () => writeWorkspaceMenuToolbarPreference(throwingStorage, "hidden"),
+    "menu toolbar preference write should tolerate storage failures",
   );
 
   assert.deepEqual(
