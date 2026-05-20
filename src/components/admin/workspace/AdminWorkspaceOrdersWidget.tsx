@@ -393,7 +393,7 @@ export default function AdminWorkspaceOrdersWidget({
     <div
       data-testid="workspace-orders-real-data"
       data-hydrated={hydrated ? "true" : "false"}
-      className="grid h-full content-start gap-3 overflow-auto bg-white"
+      className="admin-widget-scroll grid h-full content-start gap-3 overflow-auto overscroll-contain bg-white"
     >
       <section className="rounded-xl border border-stone-200 bg-white p-3 shadow-sm">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">

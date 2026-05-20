@@ -24,6 +24,7 @@ import {
   deriveUpgradePrices,
 } from "@/lib/upgrade-pricing";
 import { isDealLimitSoldOut } from "@/lib/deal-selling-limits";
+import { isKioskSurfaceRequest } from "@/lib/kiosk-surface-request";
 import { withObservability } from "@/lib/observability/route-context";
 
 export const dynamic = "force-dynamic";
@@ -56,25 +57,32 @@ function nextDealScheduleRefreshAt(
 }
 
 export async function GET(req: NextRequest) {
-  return withObservability(req, async (req, _obsCtx) => {
-  const isAdmin =
-    (await hasValidAdminAuth(req)) || Boolean(await getAdminSessionFromRequest(req));
-  const deviceActor = isAdmin ? null : await getDeviceSessionFromRequest(req);
+  return withObservability(req, async (req, obsCtx) => {
+    const kioskSurface = isKioskSurfaceRequest(req.nextUrl.searchParams);
+    const isAdmin =
+      !kioskSurface &&
+      ((await hasValidAdminAuth(req)) ||
+        Boolean(await getAdminSessionFromRequest(req)));
+    const deviceActor = isAdmin ? null : await getDeviceSessionFromRequest(req);
 
-  if (!isAdmin && (!deviceActor || deviceActor.role !== "kiosk")) {
-    return NextResponse.json(
-      { error: "Unauthorized", errorCode: "unauthorized" },
-      { status: 401 }
-    );
-  }
+    if (!isAdmin && (!deviceActor || deviceActor.role !== "kiosk")) {
+      return NextResponse.json(
+        { error: "Unauthorized", errorCode: "unauthorized" },
+        { status: 401 }
+      );
+    }
 
-  const outletId = deviceActor ? getDeviceMenuOutletId(deviceActor) : DEFAULT_OUTLET_ID;
-  if (!outletId) {
-    return NextResponse.json(
-      { error: "Unauthorized", errorCode: "unauthorized" },
-      { status: 401 }
-    );
-  }
+    const outletId = deviceActor
+      ? getDeviceMenuOutletId(deviceActor)
+      : DEFAULT_OUTLET_ID;
+    if (!outletId) {
+      return NextResponse.json(
+        { error: "Unauthorized", errorCode: "unauthorized" },
+        { status: 401 }
+      );
+    }
+    if (deviceActor?.deviceId) obsCtx.deviceId = deviceActor.deviceId;
+    obsCtx.outletId = outletId;
   const now = new Date();
   const strictDealBaseEnforcement = isStrictDealBaseEnforcementEnabled();
   const [version, categories, items, dealScheduleBoundaries] = await Promise.all([

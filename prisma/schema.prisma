@@ -856,6 +856,16 @@ model DeviceSession {
   revokedAt  DateTime?
   userAgent  String?
   ipHash     String?
+  lastHeartbeatAt      DateTime?
+  lastLifecycleAt      DateTime?
+  lastLifecycleEvent   String?
+  lastVisibilityState  String?
+  lastClosedAt         DateTime?
+  lastCloseReason      String?
+  clientSessionHash    String?
+  clientSequence       Int?
+  lastClientErrorAt    DateTime?
+  uncleanRecoveryCount Int       @default(0)
 
   activeOutletId          String?
   activeStaffUserId       String?
@@ -868,6 +878,8 @@ model DeviceSession {
   @@index([deviceId])
   @@index([expiresAt])
   @@index([revokedAt])
+  @@index([lastHeartbeatAt])
+  @@index([lastLifecycleEvent])
   @@index([activeOutletId])
   @@index([activeStaffUserId])
   @@index([activeStaffOutletId])

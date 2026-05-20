@@ -18,16 +18,26 @@ function stubServerOnly() {
 
 async function main() {
   stubServerOnly();
-  const [{ executeDuePendingOwnerChanges }, { prisma }] = await Promise.all([
+  const [
+    { executeDuePendingOwnerChanges },
+    { prisma },
+    { runWithJobContext },
+  ] = await Promise.all([
     import("@/lib/admin-owner-changes"),
     import("@/lib/db"),
+    import("@/lib/observability/job-context"),
   ]);
 
-  const result = await executeDuePendingOwnerChanges();
-  console.log(
-    `Pending owner changes processed. Executed: ${result.executed}. Failed: ${result.failed}.`
-  );
-  await prisma.$disconnect();
+  try {
+    await runWithJobContext("owner-changes.execute-due", async () => {
+      const result = await executeDuePendingOwnerChanges();
+      console.log(
+        `Pending owner changes processed. Executed: ${result.executed}. Failed: ${result.failed}.`
+      );
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
 main().catch((error) => {

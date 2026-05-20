@@ -18,16 +18,22 @@ function stubServerOnly() {
 
 async function main() {
   stubServerOnly();
-  const [{ sendPendingAuthEmails }, { prisma }] = await Promise.all([
+  const [{ sendPendingAuthEmails }, { prisma }, { runWithJobContext }] = await Promise.all([
     import("@/lib/auth-email-outbox"),
     import("@/lib/db"),
+    import("@/lib/observability/job-context"),
   ]);
 
-  const result = await sendPendingAuthEmails();
-  console.log(
-    `Auth email outbox processed. Sent: ${result.sent}. Retried: ${result.retried}. Failed: ${result.failed}. Skipped: ${result.skipped}.`
-  );
-  await prisma.$disconnect();
+  try {
+    await runWithJobContext("auth-email-outbox.send-pending", async () => {
+      const result = await sendPendingAuthEmails();
+      console.log(
+        `Auth email outbox processed. Sent: ${result.sent}. Retried: ${result.retried}. Failed: ${result.failed}. Skipped: ${result.skipped}.`
+      );
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
 main().catch((error) => {

@@ -37,6 +37,7 @@
 import { getRequestContext } from "./context";
 import { describeDroppedField, isSensitiveKey, scrub } from "./redaction";
 import { createStubAdapter } from "./adapters/stub";
+import { recordCapturedExceptionIssue } from "./status-events";
 import {
   VALID_SURFACES,
   type Adapter,
@@ -62,6 +63,7 @@ const CONTEXT_ALLOW_LIST: ReadonlyArray<keyof CaptureContext> = [
   "adminUserId",
   "requestId",
   "clientRequestId",
+  "routePattern",
   "jobId",
   "jobName",
   "startedAt",
@@ -349,6 +351,7 @@ export function captureException(
   try {
     const ctx = buildContext(context);
     const event = buildExceptionEvent(error, ctx);
+    recordCapturedExceptionIssue(event);
     moduleState.adapter.captureException(event);
     moduleState.consecutiveAdapterFailures = 0;
   } catch (adapterErr) {

@@ -20,7 +20,7 @@ import type {
 } from "@/lib/admin/workspace/devices-summary";
 import type { AdminWorkspaceNotify } from "./AdminWorkspaceToastHost";
 
-const WORKSPACE_DEVICES_REFRESH_MS = 60_000;
+const WORKSPACE_DEVICES_REFRESH_MS = 30_000;
 
 type DeviceDraft = {
   name: string;
@@ -104,6 +104,14 @@ function draftChanged(device: WorkspaceDeviceRow, draft: DeviceDraft | undefined
 }
 
 function deviceState(device: WorkspaceDeviceRow) {
+  if (device.presenceKind === "online") return "online";
+  if (device.presenceKind === "idle" || device.presenceKind === "hidden") {
+    return "idle";
+  }
+  if (device.presenceKind === "disabled") return "disabled";
+  if (device.presenceKind === "closed" || device.presenceKind === "unexpected_offline") {
+    return "offline";
+  }
   if (!device.isActive) return "disabled";
   if (!device.lastSeenAt) return "offline";
 
@@ -119,6 +127,10 @@ function stateLabel(state: string) {
   if (state === "idle") return "Idle";
   if (state === "offline") return "Offline";
   return "Disabled";
+}
+
+function deviceStatusLabel(device: WorkspaceDeviceRow) {
+  return device.presenceLabel ?? stateLabel(deviceState(device));
 }
 
 function stateClasses(state: string) {
@@ -295,7 +307,7 @@ export default function WorkspaceDevicesPanel({
   const rootClass =
     variant === "modal"
       ? "grid content-start gap-3 bg-white"
-      : "grid h-full content-start gap-3 overflow-auto bg-white";
+      : "admin-widget-scroll grid h-full content-start gap-3 overflow-auto overscroll-contain bg-white";
   const detailGridClass =
     variant === "modal"
       ? "grid gap-3 lg:grid-cols-[minmax(260px,0.75fr)_minmax(420px,1.25fr)]"
@@ -1018,7 +1030,7 @@ export default function WorkspaceDevicesPanel({
                             state,
                           )}`}
                         />
-                        {stateLabel(state)}
+                        {deviceStatusLabel(device)}
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[11px] font-semibold text-stone-500">
@@ -1050,7 +1062,7 @@ export default function WorkspaceDevicesPanel({
                           deviceState(selectedDevice),
                         )}`}
                       >
-                        {stateLabel(deviceState(selectedDevice))}
+                        {deviceStatusLabel(selectedDevice)}
                       </span>
                     </div>
                     <div className="mt-1 text-xs font-bold text-stone-500">
@@ -1094,8 +1106,15 @@ export default function WorkspaceDevicesPanel({
                   </div>
 
                   {[
+                    ["Presence", selectedDevice.presenceLabel ?? stateLabel(deviceState(selectedDevice))],
                     ["Role", getDeviceRoleLabel(selectedDevice.role)],
                     ["Last seen", formatTimestamp(selectedDevice.lastSeenAt)],
+                    [
+                      "Lifecycle",
+                      selectedDevice.presenceLastLifecycleAt
+                        ? formatTimestamp(selectedDevice.presenceLastLifecycleAt)
+                        : "Not recorded",
+                    ],
                     ["Rotated", formatTimestamp(selectedDevice.rotatedAt)],
                     ["Created", formatTimestamp(selectedDevice.createdAt)],
                   ].map(([label, value]) => (
@@ -1351,7 +1370,7 @@ export default function WorkspaceDevicesPanel({
                       deviceState(editingDevice),
                     )}`}
                   >
-                    {stateLabel(deviceState(editingDevice))}
+                    {deviceStatusLabel(editingDevice)}
                   </span>
                 </div>
                 <div className="mt-1 text-xs font-bold text-stone-500">

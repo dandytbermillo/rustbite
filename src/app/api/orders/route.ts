@@ -123,6 +123,9 @@ export async function POST(req: NextRequest) {
     const auth = await authorizeOrderApiAccess(req, "createOrder");
     if (auth.response) return auth.response;
     const actor = auth.actor!;
+    if (actor.deviceId) obsCtx.deviceId = actor.deviceId;
+    const contextOutletId = actor.allowedOutletIds[0] ?? actor.outletId;
+    if (contextOutletId) obsCtx.outletId = contextOutletId;
     const syncContext = {
       clientType: actor.role,
       deviceId: actor.deviceId,
@@ -313,10 +316,13 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  return withObservability(req, async (req, _obsCtx) => {
+  return withObservability(req, async (req, obsCtx) => {
     const auth = await authorizeOrderApiAccess(req, "readOrderFeed");
     if (auth.response) return auth.response;
     const actor = auth.actor!;
+    if (actor.deviceId) obsCtx.deviceId = actor.deviceId;
+    const contextOutletId = actor.allowedOutletIds[0] ?? actor.outletId;
+    if (contextOutletId) obsCtx.outletId = contextOutletId;
 
     const url = new URL(req.url);
     const statusParam = url.searchParams.get("status");

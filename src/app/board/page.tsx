@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import DevicePresenceReporter from "@/components/device/DevicePresenceReporter";
 import { BRAND } from "@/lib/brand";
 import { redirectToDeviceLogin } from "@/lib/device-client-auth";
 import { BOARD_ACTIVE_STATUSES } from "@/lib/order-status";
@@ -88,6 +89,7 @@ export default function BoardPage() {
 
   return (
     <main className="min-h-screen flex flex-col" style={{ background: BRAND.black, color: "white" }}>
+      <DevicePresenceReporter surface="board" />
       <header
         className="flex items-center justify-between px-8 py-4 border-b-4"
         style={{ background: BRAND.redDark, borderColor: BRAND.yellow }}

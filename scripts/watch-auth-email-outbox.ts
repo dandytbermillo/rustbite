@@ -52,9 +52,11 @@ async function main() {
     return;
   }
 
-  const [{ sendPendingAuthEmails }, { prisma }] = await Promise.all([
+  const [{ sendPendingAuthEmails }, { prisma }, { runWithJobContext }] =
+    await Promise.all([
     import("@/lib/auth-email-outbox"),
     import("@/lib/db"),
+    import("@/lib/observability/job-context"),
   ]);
 
   const pollMs = intervalMs();
@@ -76,12 +78,14 @@ async function main() {
 
   while (!stopping) {
     try {
-      const result = await sendPendingAuthEmails();
-      if (result.sent || result.retried || result.failed || result.skipped) {
-        console.log(
-          `Auth email outbox processed. Sent: ${result.sent}. Retried: ${result.retried}. Failed: ${result.failed}. Skipped: ${result.skipped}.`
-        );
-      }
+      await runWithJobContext("auth-email-outbox.worker-iteration", async () => {
+        const result = await sendPendingAuthEmails();
+        if (result.sent || result.retried || result.failed || result.skipped) {
+          console.log(
+            `Auth email outbox processed. Sent: ${result.sent}. Retried: ${result.retried}. Failed: ${result.failed}. Skipped: ${result.skipped}.`
+          );
+        }
+      });
     } catch (error) {
       console.error("Auth email worker iteration failed.");
       console.error(error);

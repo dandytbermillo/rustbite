@@ -5,6 +5,10 @@ import {
   adminActorHasPermission,
   type AdminPermissionContext,
 } from "@/lib/admin-sessions";
+import {
+  deriveDevicePresence,
+  type DevicePresenceKind,
+} from "@/lib/device-presence";
 import { parseStockRequirementsJson } from "@/lib/menu-stock-movements";
 
 export type DashboardRangeKey = "today" | "yesterday" | "week" | "custom";
@@ -86,6 +90,11 @@ export type DashboardDeviceFleetDevice = {
   role: string;
   roleLabel: string;
   state: DashboardDeviceState;
+  presenceKind: DevicePresenceKind;
+  presenceLabel: string;
+  presenceReason: string | null;
+  presenceLastLifecycleAt: string | null;
+  presenceLastHeartbeatAt: string | null;
   lastSeenAt: string | null;
   lastSeenLabel: string;
   physicalLocation: string | null;
@@ -407,34 +416,6 @@ function ageMinutes(now: Date, value: Date): number {
   return Math.max(0, Math.floor((now.getTime() - value.getTime()) / 60_000));
 }
 
-function deviceState(
-  now: Date,
-  device: { isActive: boolean; lastSeenAt: Date | null },
-): DashboardDeviceState {
-  if (!device.isActive) return "disabled";
-  if (!device.lastSeenAt) return "offline";
-  const ageMs = now.getTime() - device.lastSeenAt.getTime();
-  if (ageMs < 2 * 60 * 1000) return "online";
-  if (ageMs <= 10 * 60 * 1000) return "idle";
-  return "offline";
-}
-
-function formatDeviceLastSeen(now: Date, value: Date | null): string {
-  if (!value) return "Never seen";
-  const minutes = ageMinutes(now, value);
-  if (minutes < 1) return "Last seen <1m ago";
-  if (minutes < 60) return `Last seen ${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  if (hours < 24) {
-    return remainingMinutes > 0
-      ? `Last seen ${hours}h ${remainingMinutes}m ago`
-      : `Last seen ${hours}h ago`;
-  }
-  const days = Math.floor(hours / 24);
-  return `Last seen ${days}d ago`;
-}
-
 function normalizeDeviceRole(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
@@ -516,10 +497,15 @@ async function buildDeviceFleet({
         where: {
           revokedAt: null,
           expiresAt: { gt: now },
-          OR: [{ activeOutletId: outletId }, { activeStaffOutletId: outletId }],
         },
         select: {
           id: true,
+          lastSeenAt: true,
+          lastHeartbeatAt: true,
+          lastLifecycleAt: true,
+          lastLifecycleEvent: true,
+          lastVisibilityState: true,
+          lastClosedAt: true,
           activeOutletId: true,
           activeStaffOutletId: true,
           activeStaffRole: true,
@@ -544,7 +530,13 @@ async function buildDeviceFleet({
   const fleetDevices: DashboardDeviceFleetDevice[] = [];
 
   for (const device of devices) {
-    const state = deviceState(now, device);
+    const presence = deriveDevicePresence({
+      now,
+      isActive: device.isActive,
+      lastSeenAt: device.lastSeenAt,
+      sessions: device.sessions,
+    });
+    const state = presence.state;
     counts[state] += 1;
     const role = normalizeDeviceRole(device.role);
     const outletNames = device.outletAccess.map((row) => row.outlet.name);
@@ -552,9 +544,16 @@ async function buildDeviceFleet({
       device.isSharedAcrossOutlets && outletNames.length > 0
         ? `Shared with ${outletNames.join(", ")}`
         : (device.outlet?.name ?? "Unassigned");
-    const activeSessions = device.sessions.length;
+    const outletScopedSessions = device.isSharedAcrossOutlets
+      ? device.sessions.filter(
+          (session) =>
+            session.activeOutletId === outletId ||
+            session.activeStaffOutletId === outletId,
+        )
+      : device.sessions;
+    const activeSessions = outletScopedSessions.length;
     const activeOperatorSession =
-      device.sessions
+      outletScopedSessions
         .filter(
           (session) =>
             session.activeStaffOutletId === outletId &&
@@ -584,10 +583,13 @@ async function buildDeviceFleet({
       role,
       roleLabel: deviceRoleLabel(role),
       state,
+      presenceKind: presence.presenceKind,
+      presenceLabel: presence.presenceLabel,
+      presenceReason: presence.presenceReason,
+      presenceLastLifecycleAt: presence.presenceLastLifecycleAt,
+      presenceLastHeartbeatAt: presence.presenceLastHeartbeatAt,
       lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
-      lastSeenLabel: device.isActive
-        ? formatDeviceLastSeen(now, device.lastSeenAt)
-        : "Disabled",
+      lastSeenLabel: presence.lastSeenLabel,
       physicalLocation: device.physicalLocation,
       assignmentLabel,
       activeSessionCount: activeSessions,
@@ -611,13 +613,14 @@ async function buildDeviceFleet({
           }
         : null,
       note:
-        state === "offline"
+        presence.presenceReason ??
+        (state === "offline"
           ? "Device has not checked in recently."
           : state === "disabled"
             ? "Device is disabled in admin."
             : device.physicalLocation
               ? device.physicalLocation
-              : null,
+              : null),
     });
   }
 

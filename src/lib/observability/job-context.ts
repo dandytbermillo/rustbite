@@ -31,6 +31,11 @@ import {
   captureException,
   flushAll,
 } from "./server";
+import {
+  logJobCompleted,
+  logJobFailed,
+  logJobStarted,
+} from "./structured-logs";
 import type { CaptureContext, CaptureContextInput } from "./types";
 
 const DEFAULT_FLUSH_TIMEOUT_MS = 2_000;
@@ -57,9 +62,14 @@ export async function runWithJobContext<T>(
   const flushTimeoutMs = options?.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
 
   return await __runWithExactContext(merged, async () => {
+    const startedAtMs = Date.now();
+    logJobStarted(merged);
     try {
-      return await fn();
+      const result = await fn();
+      logJobCompleted(merged, Date.now() - startedAtMs);
+      return result;
     } catch (err) {
+      logJobFailed(merged, Date.now() - startedAtMs);
       // Capture for observability. Fire-and-forget by contract.
       try {
         captureException(err);

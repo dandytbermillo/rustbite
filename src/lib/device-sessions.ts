@@ -46,6 +46,10 @@ type CookieReader = {
   get(name: string): { value: string } | undefined;
 };
 
+type DeviceSessionResolveOptions = {
+  touchLastSeen?: boolean;
+};
+
 export type DeviceSessionActor = {
   sessionId: string | null;
   deviceId: string | null;
@@ -165,14 +169,15 @@ export async function createDeviceSession(
 
 export async function getDeviceSessionFromCookieReader(
   cookieReader: CookieReader,
-  req?: NextRequest
+  req?: NextRequest,
+  options: DeviceSessionResolveOptions = {},
 ): Promise<DeviceSessionActor | null> {
   const raw = cookieReader.get(DEVICE_SESSION_COOKIE)?.value;
   if (!raw) return null;
 
   const dbToken = getDatabaseDeviceSessionToken(raw);
   if (dbToken) {
-    return getDatabaseDeviceSessionActor(dbToken.token, req);
+    return getDatabaseDeviceSessionActor(dbToken.token, req, options);
   }
 
   if (!isLegacyDeviceAuthEnabled()) return null;
@@ -206,9 +211,10 @@ export async function getDeviceSessionFromCookieReader(
 }
 
 export async function getDeviceSessionFromRequest(
-  req: NextRequest
+  req: NextRequest,
+  options: DeviceSessionResolveOptions = {},
 ): Promise<DeviceSessionActor | null> {
-  return getDeviceSessionFromCookieReader(req.cookies, req);
+  return getDeviceSessionFromCookieReader(req.cookies, req, options);
 }
 
 export async function authenticateDatabaseDevice(
@@ -286,7 +292,8 @@ export async function isValidLegacyDevicePassword(
 
 async function getDatabaseDeviceSessionActor(
   token: string,
-  req?: NextRequest
+  req?: NextRequest,
+  options: DeviceSessionResolveOptions = {},
 ): Promise<DeviceSessionActor | null> {
   const now = new Date();
   const session = await prisma.deviceSession.findUnique({
@@ -347,7 +354,7 @@ async function getDatabaseDeviceSessionActor(
     ? null
     : session.device.outlet?.id ?? null;
 
-  if (shouldTouchLastSeen(session.lastSeenAt, now)) {
+  if (options.touchLastSeen !== false && shouldTouchLastSeen(session.lastSeenAt, now)) {
     await prisma.$transaction([
       prisma.deviceSession.update({
         where: { id: session.id },

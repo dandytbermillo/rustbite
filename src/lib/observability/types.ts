@@ -51,6 +51,7 @@ export type CaptureContext = {
   adminUserId?: string;
   requestId?: string;
   clientRequestId?: string;
+  routePattern?: string;
   jobId?: string;
   jobName?: string;
   // Set by runWithJobContext when a unit of work begins. Safe to log

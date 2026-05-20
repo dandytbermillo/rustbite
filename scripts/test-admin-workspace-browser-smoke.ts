@@ -22,6 +22,11 @@ import {
   toDealScheduleTimeInputValue,
 } from "@/lib/deal-schedule";
 import { getOutletMenuVersion } from "@/lib/outlet-menu-sync";
+import {
+  defaultAdminWorkspaceLayout,
+  type AdminWorkspaceWidgetAccess,
+  type AdminWorkspaceWidgetId,
+} from "@/lib/admin/workspace/layout";
 
 const baseUrl =
   process.env.ADMIN_WORKSPACE_BROWSER_BASE_URL ??
@@ -72,7 +77,30 @@ type Fixture = {
   tokens: Record<RoleKey, string>;
 };
 
-type WidgetId = "dashboard" | "orders" | "menu" | "devices" | "attention";
+type WidgetId = AdminWorkspaceWidgetId;
+const smokeWorkspaceAccess: AdminWorkspaceWidgetAccess[] = [
+  { id: "dashboard", canView: true },
+  { id: "status", canView: true },
+  { id: "attention", canView: true },
+  { id: "orders", canView: true },
+  { id: "devices", canView: true },
+  { id: "menu", canView: true },
+];
+
+function defaultWorkspaceWidgetStyle(widgetId: WidgetId) {
+  const widget = defaultAdminWorkspaceLayout({
+    outletId: outletAId,
+    access: smokeWorkspaceAccess,
+    now: new Date("2026-05-19T00:00:00.000Z"),
+  }).widgets.find((entry) => entry.id === widgetId);
+  assert(widget, `${widgetId} should exist in the default Workspace layout.`);
+  return {
+    left: widget.x,
+    top: widget.y,
+    width: widget.width,
+    height: widget.height,
+  };
+}
 
 type WidgetStyle = {
   left: number;
@@ -874,7 +902,18 @@ async function newWorkspacePage({
   ]);
   const page = await context.newPage();
   await page.goto("/admin/workspace", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
+  try {
+    await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
+  } catch (error) {
+    const bodyText = await page.locator("body").innerText().catch(() => "");
+    console.error(
+      `Workspace page did not render header. url=${page.url()} body=${bodyText.slice(
+        0,
+        1000,
+      )}`,
+    );
+    throw error;
+  }
   await expect(page.getByTestId("admin-workspace-canvas")).toBeVisible();
   await expect(page.getByText("Admin Workspace")).toHaveCount(0);
   return { context, page };
@@ -1103,6 +1142,602 @@ async function assertWorkspaceFullscreenPreference(
       true,
       "Exiting fullscreen should unlock the orientation when supported.",
     );
+  } finally {
+    await context.close();
+  }
+}
+
+async function assertWorkspaceMenuToolbarManualHide(
+  browser: Browser,
+  token: string,
+) {
+  const { context, page } = await newWorkspacePage({
+    browser,
+    token,
+    viewport: { width: 1440, height: 950 },
+  });
+
+  async function expectToolbarSlotClass(
+    expectedClass: "max-h-0" | "max-h-[480px]",
+  ) {
+    const slot = page.getByTestId("workspace-menu-toolbar-slot");
+    await expect
+      .poll(async () => {
+        const className = (await slot.getAttribute("class")) ?? "";
+        return className.includes(expectedClass);
+      })
+      .toBe(true);
+  }
+
+  async function expectToolbarToggleText(text: "Hide toolbar" | "Show toolbar") {
+    const toggle = page.getByTestId("workspace-menu-summon-toolbar");
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toContainText(text);
+  }
+
+  try {
+    await page.goto("/admin/workspace?widget=menu", {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
+    await expect(
+      page.getByTestId("admin-workspace-widget-menu"),
+    ).toHaveAttribute("data-active", "true");
+
+    await expectToolbarSlotClass("max-h-[480px]");
+    await expectToolbarToggleText("Hide toolbar");
+
+    await page.getByTestId("workspace-menu-summon-toolbar").click();
+    await expectToolbarSlotClass("max-h-0");
+    await expectToolbarToggleText("Show toolbar");
+
+    await page.getByTestId("workspace-menu-real-data").evaluate((element) => {
+      element.scrollTo({ top: 800 });
+    });
+    await page.waitForTimeout(150);
+    await expectToolbarSlotClass("max-h-0");
+    await expectToolbarToggleText("Show toolbar");
+
+    await page.getByTestId("workspace-menu-real-data").evaluate((element) => {
+      element.scrollTo({ top: 0 });
+    });
+    await page.waitForTimeout(150);
+    await expectToolbarSlotClass("max-h-0");
+    await expectToolbarToggleText("Show toolbar");
+
+    await page.getByTestId("workspace-menu-summon-toolbar").click();
+    await expectToolbarSlotClass("max-h-[480px]");
+    await expectToolbarToggleText("Hide toolbar");
+
+    await page.getByTestId("workspace-menu-real-data").evaluate((element) => {
+      element.scrollTo({ top: 800 });
+    });
+    await page.waitForTimeout(150);
+    await expectToolbarSlotClass("max-h-[480px]");
+    await expectToolbarToggleText("Hide toolbar");
+  } finally {
+    await context.close();
+  }
+}
+
+async function assertWorkspaceSpaceHoldPan(browser: Browser, token: string) {
+  const { context, page } = await newWorkspacePage({
+    browser,
+    token,
+    viewport: { width: 1440, height: 950 },
+  });
+
+  async function expectPanMode(enabled: boolean) {
+    await expect(page.getByTestId("admin-pan-toggle")).toHaveAttribute(
+      "aria-pressed",
+      enabled ? "true" : "false",
+    );
+    await expect
+      .poll(async () => {
+        const className =
+          (await page
+            .getByTestId("admin-workspace-scroll-container")
+            .getAttribute("class")) ?? "";
+        return className.includes("admin-workspace-pan-mode");
+      })
+      .toBe(enabled);
+  }
+
+  try {
+    await page.getByTestId("admin-workspace-scroll-container").click({
+      position: { x: 20, y: 20 },
+    });
+    await expectPanMode(false);
+
+    await page.keyboard.down("Space");
+    await expectPanMode(true);
+    await page.keyboard.up("Space");
+    await expectPanMode(false);
+
+    await page.getByTestId("admin-pan-toggle").click();
+    await expectPanMode(true);
+    await page.getByTestId("admin-workspace-scroll-container").click({
+      position: { x: 20, y: 20 },
+    });
+    await page.keyboard.down("Space");
+    await expectPanMode(true);
+    await page.keyboard.up("Space");
+    await expectPanMode(true);
+    await page.getByTestId("admin-pan-toggle").click();
+    await expectPanMode(false);
+
+    await page.goto("/admin/workspace?widget=menu", {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page.getByTestId("workspace-menu-search")).toBeVisible();
+    await page.getByTestId("workspace-menu-search").click();
+    await page.keyboard.down("Space");
+    await expectPanMode(false);
+    await page.keyboard.up("Space");
+    await expectPanMode(false);
+  } finally {
+    await context.close();
+  }
+}
+
+async function assertWorkspaceScrollGuidance(browser: Browser, token: string) {
+  const enablePanMessage = "Hold Space bar or use Pan to move around the workspace.";
+  const disablePanMessage = "Turn off Pan to scroll this widget.";
+  const { context, page } = await newWorkspacePage({
+    browser,
+    token,
+    viewport: { width: 1440, height: 950 },
+  });
+  const clientErrors: string[] = [];
+  page.on("pageerror", (error) => {
+    clientErrors.push(error.message);
+  });
+  page.on("console", (message) => {
+    if (message.type() === "error") clientErrors.push(message.text());
+  });
+
+  async function dismissWorkspaceToasts() {
+    const dismissButtons = page.getByRole("button", {
+      name: "Dismiss notification",
+    });
+    while ((await dismissButtons.count()) > 0) {
+      await dismissButtons.first().click();
+    }
+  }
+
+  try {
+    const missingContainment = await page
+      .locator(".admin-widget-scroll")
+      .evaluateAll((elements) =>
+        elements
+          .filter((element) => !element.classList.contains("overscroll-contain"))
+          .map(
+            (element) =>
+              element.closest<HTMLElement>("[data-testid]")?.dataset.testid ??
+              element.className,
+          ),
+      );
+    assert.deepEqual(
+      missingContainment,
+      [],
+      "Every Workspace .admin-widget-scroll must also use overscroll-contain.",
+    );
+    for (const testId of [
+      "workspace-dashboard-real-data",
+      "workspace-orders-real-data",
+      "workspace-devices-real-data",
+      "workspace-attention-real-data",
+      "workspace-menu-real-data",
+    ]) {
+      const className = (await page.getByTestId(testId).getAttribute("class")) ?? "";
+      assert(
+        className.includes("admin-widget-scroll") &&
+          className.includes("overscroll-contain"),
+        `${testId} must be a contained Workspace scroll surface.`,
+      );
+    }
+
+    const scrollableEdgeProbe = await page.evaluate(() => {
+      const wheelContainer = document.querySelector<HTMLElement>(
+        '[data-testid="admin-workspace-scroll-container"]',
+      );
+      if (!wheelContainer) return { point: null };
+      const probe = document.createElement("div");
+      probe.dataset.testid = "workspace-scroll-guidance-edge-probe";
+      probe.className = "admin-widget-scroll overscroll-contain";
+      Object.assign(probe.style, {
+        position: "fixed",
+        left: "32px",
+        top: "140px",
+        zIndex: "2147483647",
+        width: "260px",
+        height: "180px",
+        overflow: "auto",
+        pointerEvents: "auto",
+        background: "white",
+        border: "1px solid black",
+      });
+      const content = document.createElement("div");
+      content.textContent = "Scrollable edge probe";
+      content.style.height = "760px";
+      probe.append(content);
+      wheelContainer.append(probe);
+      probe.scrollTop = probe.scrollHeight;
+      const rect = probe.getBoundingClientRect();
+      return {
+        point: {
+          x: Math.min(
+            Math.max(rect.left + rect.width / 2, 4),
+            window.innerWidth - 4,
+          ),
+          y: Math.min(
+            Math.max(rect.top + rect.height / 2, 4),
+            window.innerHeight - 4,
+          ),
+        },
+        isScrollable: probe.scrollHeight > probe.clientHeight + 1,
+      };
+    });
+    assert(
+      scrollableEdgeProbe.point && scrollableEdgeProbe.isScrollable,
+      "Workspace scroll guidance smoke requires a scrollable edge probe.",
+    );
+    await dismissWorkspaceToasts();
+    await page.mouse.move(
+      scrollableEdgeProbe.point.x,
+      scrollableEdgeProbe.point.y,
+    );
+    await page.mouse.wheel(0, 220);
+    await page.waitForTimeout(150);
+    await page.evaluate(() => {
+      const probe = document.querySelector<HTMLElement>(
+        '[data-testid="workspace-scroll-guidance-edge-probe"]',
+      );
+      probe?.remove();
+    });
+    await expect(
+      page.getByTestId("admin-workspace-toast").filter({ hasText: enablePanMessage }),
+    ).toHaveCount(0);
+
+    const deadScrollTarget = await page.evaluate(() => {
+      const wheelContainer = document.querySelector<HTMLElement>(
+        '[data-testid="admin-workspace-scroll-container"]',
+      );
+      if (!wheelContainer) return null;
+      const widget = document.createElement("div");
+      widget.dataset.testid =
+        "admin-workspace-widget-scroll-guidance-dead-probe";
+      Object.assign(widget.style, {
+        position: "fixed",
+        left: "32px",
+        top: "140px",
+        zIndex: "2147483647",
+        width: "260px",
+        height: "180px",
+        pointerEvents: "auto",
+      });
+      const probe = document.createElement("div");
+      probe.dataset.testid = "workspace-scroll-guidance-dead-probe";
+      probe.className = "admin-widget-scroll overscroll-contain";
+      Object.assign(probe.style, {
+        width: "100%",
+        height: "100%",
+        overflow: "auto",
+        pointerEvents: "auto",
+        background: "white",
+        border: "1px solid black",
+      });
+      const content = document.createElement("div");
+      content.textContent = "Dead scroll probe";
+      content.style.height = "80px";
+      probe.append(content);
+      widget.append(probe);
+      wheelContainer.append(widget);
+      const rect = probe.getBoundingClientRect();
+      return {
+        x: Math.min(
+          Math.max(rect.left + rect.width / 2, 4),
+          window.innerWidth - 4,
+        ),
+        y: Math.min(
+          Math.max(rect.top + Math.min(rect.height / 2, 120), 4),
+          window.innerHeight - 4,
+        ),
+      };
+    });
+    assert(
+      deadScrollTarget,
+      "Workspace scroll guidance smoke requires a visible widget scroll body.",
+    );
+
+    await page.mouse.move(deadScrollTarget.x, deadScrollTarget.y);
+    await page.mouse.wheel(0, 360);
+    const enablePanToast = page
+      .getByTestId("admin-workspace-toast")
+      .filter({ hasText: enablePanMessage });
+    await expect(enablePanToast).toHaveCount(1);
+    await dismissWorkspaceToasts();
+    await expect(enablePanToast).toHaveCount(0);
+    await page.waitForTimeout(3200);
+    await page.mouse.move(deadScrollTarget.x, deadScrollTarget.y);
+    await page.mouse.wheel(0, 360);
+    await page.waitForTimeout(250);
+    await expect(enablePanToast).toHaveCount(0);
+
+    await page.getByTestId("admin-pan-toggle").click();
+    await expect(page.getByTestId("admin-pan-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await page.getByTestId("admin-pan-toggle").click();
+    await expect(page.getByTestId("admin-pan-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await page.mouse.move(deadScrollTarget.x, deadScrollTarget.y);
+    await page.mouse.wheel(0, 360);
+    await expect(enablePanToast).toHaveCount(1);
+    await page.evaluate(() => {
+      document
+        .querySelector(
+          '[data-testid="admin-workspace-widget-scroll-guidance-dead-probe"]',
+        )
+        ?.remove();
+    });
+    await dismissWorkspaceToasts();
+    await expect(enablePanToast).toHaveCount(0);
+
+    await page.goto("/admin/workspace?widget=menu", {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page.getByTestId("admin-workspace-header")).toBeVisible();
+    await expect(
+      page.getByTestId("admin-workspace-widget-menu"),
+    ).toHaveAttribute("data-active", "true");
+    await expect
+      .poll(async () => (await workspaceScrollPosition(page)).top > 0)
+      .toBe(true);
+
+    const scrollableTargetResult = await page.evaluate(() => {
+      const menuWidget = document.querySelector<HTMLElement>(
+        '[data-testid="admin-workspace-widget-menu"]',
+      );
+      const elements = Array.from(
+        menuWidget?.querySelectorAll<HTMLElement>(".admin-widget-scroll") ?? [],
+      );
+      const debug = elements.map((element, index) => {
+        const rect = element.getBoundingClientRect();
+        const x = Math.min(
+          Math.max(rect.left + rect.width / 2, 4),
+          window.innerWidth - 4,
+        );
+        const y = Math.min(
+          Math.max(rect.top + Math.min(rect.height / 2, 120), 4),
+          window.innerHeight - 4,
+        );
+        const topElement = document.elementFromPoint(x, y);
+        return {
+          index,
+          testId:
+            element.closest<HTMLElement>("[data-testid]")?.dataset.testid ??
+            null,
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          top: Math.round(rect.top),
+          bottom: Math.round(rect.bottom),
+          scrollHeight: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          hitTested: topElement instanceof HTMLElement && element.contains(topElement),
+        };
+      });
+      const target = elements.find((element) => {
+        const rect = element.getBoundingClientRect();
+        const x = Math.min(
+          Math.max(rect.left + rect.width / 2, 4),
+          window.innerWidth - 4,
+        );
+        const y = Math.min(
+          Math.max(rect.top + Math.min(rect.height / 2, 120), 4),
+          window.innerHeight - 4,
+        );
+        const topElement = document.elementFromPoint(x, y);
+        return (
+          rect.width > 20 &&
+          rect.height > 20 &&
+          rect.right > 0 &&
+          rect.left < window.innerWidth &&
+          rect.bottom > 0 &&
+          rect.top < window.innerHeight &&
+          topElement instanceof HTMLElement &&
+          element.contains(topElement) &&
+          element.scrollHeight > element.clientHeight + 1
+        );
+      });
+      if (!target) return { point: null, debug };
+      target.scrollTop = Math.floor((target.scrollHeight - target.clientHeight) / 2);
+      const rect = target.getBoundingClientRect();
+      return {
+        point: {
+          x: Math.min(
+            Math.max(rect.left + rect.width / 2, 4),
+            window.innerWidth - 4,
+          ),
+          y: Math.min(
+            Math.max(rect.top + Math.min(rect.height / 2, 120), 4),
+            window.innerHeight - 4,
+          ),
+        },
+        debug,
+      };
+    });
+    const scrollableTarget = scrollableTargetResult.point;
+    assert(
+      scrollableTarget,
+      `Workspace scroll guidance smoke requires a visible scrollable Menu body. ${JSON.stringify(
+        scrollableTargetResult.debug,
+      )}`,
+    );
+
+    await page.mouse.move(scrollableTarget.x, scrollableTarget.y);
+    await page.mouse.wheel(0, 120);
+    await page.waitForTimeout(250);
+    await expect(
+      page.getByTestId("admin-workspace-toast").filter({ hasText: enablePanMessage }),
+    ).toHaveCount(0);
+
+    await page.getByTestId("admin-pan-toggle").click();
+    await expect(page.getByTestId("admin-pan-toggle")).toContainText("Pan ON");
+    const panTargetDiagnostics = await page.evaluate((point) => {
+      const canvas = document.querySelector<HTMLElement>(
+        '[data-testid="admin-workspace-canvas"]',
+      );
+      if (!canvas) return { hasCanvas: false };
+      const widgets = Array.from(canvas.children)
+        .filter(
+          (child): child is HTMLElement =>
+            child instanceof HTMLElement &&
+            (child.getAttribute("data-testid") ?? "").startsWith(
+              "admin-workspace-widget-",
+            ),
+        )
+        .map((widget, index) => {
+          const rect = widget.getBoundingClientRect();
+          return {
+            index,
+            testId: widget.getAttribute("data-testid"),
+            zIndex: Number.parseInt(window.getComputedStyle(widget).zIndex, 10),
+            contains:
+              point.x >= rect.left &&
+              point.x <= rect.right &&
+              point.y >= rect.top &&
+              point.y <= rect.bottom,
+          };
+        });
+      const topWidget = widgets
+        .filter((widget) => widget.contains)
+        .sort((a, b) => a.zIndex - b.zIndex || a.index - b.index)
+        .at(-1);
+      const scrolls = topWidget
+        ? Array.from(
+            canvas
+              .querySelector<HTMLElement>(
+                `[data-testid="${topWidget.testId}"]`,
+              )
+              ?.querySelectorAll<HTMLElement>(".admin-widget-scroll") ?? [],
+          ).map((scroll) => {
+            const rect = scroll.getBoundingClientRect();
+            return {
+              contains:
+                point.x >= rect.left &&
+                point.x <= rect.right &&
+                point.y >= rect.top &&
+                point.y <= rect.bottom,
+              scrollHeight: scroll.scrollHeight,
+              clientHeight: scroll.clientHeight,
+            };
+          })
+        : [];
+      return { hasCanvas: true, widgets, topWidget, scrolls };
+    }, scrollableTarget);
+    const panTargetScrolls =
+      "scrolls" in panTargetDiagnostics &&
+      Array.isArray(panTargetDiagnostics.scrolls)
+        ? panTargetDiagnostics.scrolls
+        : [];
+    assert(
+      panTargetDiagnostics.hasCanvas &&
+        panTargetScrolls.some(
+          (scroll) =>
+            scroll.contains && scroll.scrollHeight > scroll.clientHeight + 1,
+        ),
+      `Pan-on scroll guidance smoke target must be point-contained and scrollable. ${JSON.stringify(
+        panTargetDiagnostics,
+      )}`,
+    );
+    await page.evaluate(() => {
+      const wheelContainer = document.querySelector<HTMLElement>(
+        '[data-testid="admin-workspace-scroll-container"]',
+      );
+      const diagnostics = window as unknown as {
+        __scrollGuidanceSmokeWheelEvents?: Array<Record<string, unknown>>;
+      };
+      diagnostics.__scrollGuidanceSmokeWheelEvents = [];
+      wheelContainer?.addEventListener(
+        "wheel",
+        (event) => {
+          const target =
+            event.target instanceof HTMLElement ? event.target : null;
+          diagnostics.__scrollGuidanceSmokeWheelEvents?.push({
+            clientX: event.clientX,
+            clientY: event.clientY,
+            deltaY: event.deltaY,
+            panMode: wheelContainer.classList.contains(
+              "admin-workspace-pan-mode",
+            ),
+            targetTestId:
+              target?.closest<HTMLElement>("[data-testid]")?.dataset.testid ??
+              null,
+            targetScroll:
+              target?.closest<HTMLElement>(".admin-widget-scroll")?.scrollHeight ??
+              null,
+            targetClient:
+              target?.closest<HTMLElement>(".admin-widget-scroll")?.clientHeight ??
+              null,
+          });
+        },
+        { capture: true, passive: true, once: true },
+      );
+    });
+    await page.mouse.move(scrollableTarget.x, scrollableTarget.y);
+    await page.mouse.wheel(0, 360);
+    const disablePanToast = page
+      .getByTestId("admin-workspace-toast")
+      .filter({ hasText: disablePanMessage });
+    try {
+      await expect(disablePanToast).toHaveCount(1);
+    } catch (error) {
+      const wheelDiagnostics = await page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __scrollGuidanceSmokeWheelEvents?: Array<Record<string, unknown>>;
+            }
+          ).__scrollGuidanceSmokeWheelEvents ?? [],
+      );
+      throw new Error(
+        `Pan-on scroll guidance toast did not appear. wheel=${JSON.stringify(
+          wheelDiagnostics,
+        )} target=${JSON.stringify(
+          panTargetDiagnostics,
+        )} clientErrors=${JSON.stringify(clientErrors)}`,
+        { cause: error },
+      );
+    }
+    await page.mouse.wheel(0, 360);
+    await page.mouse.wheel(0, 360);
+    await expect(disablePanToast).toHaveCount(1);
+    await dismissWorkspaceToasts();
+    await expect(disablePanToast).toHaveCount(0);
+
+    await page.waitForTimeout(3200);
+    await page.mouse.move(scrollableTarget.x, scrollableTarget.y);
+    await page.mouse.wheel(0, 360);
+    await page.waitForTimeout(250);
+    await expect(disablePanToast).toHaveCount(0);
+
+    await page.getByTestId("admin-pan-toggle").click();
+    await expect(page.getByTestId("admin-pan-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await page.getByTestId("admin-pan-toggle").click();
+    await expect(page.getByTestId("admin-pan-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await page.mouse.move(scrollableTarget.x, scrollableTarget.y);
+    await page.mouse.wheel(0, 360);
+    await expect(disablePanToast).toHaveCount(1);
   } finally {
     await context.close();
   }
@@ -1347,8 +1982,25 @@ async function expectWorkspaceUtilityDeepLink({
     modalParam,
     `${href} should preserve the requested Workspace modal.`,
   );
-  await page.getByTestId("admin-workspace-utility-modal-close").click();
-  await expect(page.getByTestId(modalTestId)).toHaveCount(0);
+  const closeButton = page.getByTestId("admin-workspace-utility-modal-close");
+  await expect(closeButton).toBeVisible();
+  let closed = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await closeButton.click();
+    try {
+      await expect(page.getByTestId(modalTestId)).toHaveCount(0, {
+        timeout: 2_000,
+      });
+      closed = true;
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await page.waitForLoadState("networkidle", { timeout: 2_000 }).catch(
+        () => undefined,
+      );
+    }
+  }
+  assert(closed, `${modalTestId} should close from the Workspace close button.`);
   const closedUrl = new URL(page.url());
   assert.equal(closedUrl.pathname, "/admin/workspace");
   assert.equal(
@@ -5100,15 +5752,16 @@ async function assertWorkspaceInteractions(browser: Browser, token: string) {
     const ordersHeader = page.getByTestId(
       "admin-workspace-widget-header-orders",
     );
+    const defaultOrders = defaultWorkspaceWidgetStyle("orders");
     const initialOrders = await widgetStyle(page, "orders");
     assert.equal(
       initialOrders.left,
-      744,
+      defaultOrders.left,
       "Orders widget should start in the default x position.",
     );
     assert.equal(
       initialOrders.top,
-      24,
+      defaultOrders.top,
       "Orders widget should start in the default y position.",
     );
 
@@ -5122,16 +5775,16 @@ async function assertWorkspaceInteractions(browser: Browser, token: string) {
     await page.mouse.move(headerBox.x + 430, headerBox.y + 245, { steps: 8 });
     await page.mouse.up();
 
-    await page.waitForFunction(() => {
+    await page.waitForFunction((expected) => {
       const element = document.querySelector<HTMLElement>(
         '[data-testid="admin-workspace-widget-orders"]',
       );
       if (!element) return false;
       return (
-        Number.parseFloat(element.style.left) !== 744 &&
-        Number.parseFloat(element.style.top) !== 24
+        Number.parseFloat(element.style.left) !== expected.left &&
+        Number.parseFloat(element.style.top) !== expected.top
       );
-    });
+    }, defaultOrders);
     const movedOrders = await widgetStyle(page, "orders");
     await waitForStoredWidgetStyle(page, "orders", {
       left: movedOrders.left,
@@ -5210,18 +5863,18 @@ async function assertWorkspaceInteractions(browser: Browser, token: string) {
         .forEach((key) => localStorage.removeItem(key));
     });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForFunction(() => {
+    await page.waitForFunction((expected) => {
       const element = document.querySelector<HTMLElement>(
         '[data-testid="admin-workspace-widget-orders"]',
       );
       if (!element) return false;
       return (
-        Number.parseFloat(element.style.left) === 744 &&
-        Number.parseFloat(element.style.top) === 24 &&
-        Number.parseFloat(element.style.width) === 704 &&
-        Number.parseFloat(element.style.height) === 524
+        Number.parseFloat(element.style.left) === expected.left &&
+        Number.parseFloat(element.style.top) === expected.top &&
+        Number.parseFloat(element.style.width) === expected.width &&
+        Number.parseFloat(element.style.height) === expected.height
       );
-    });
+    }, defaultOrders);
 
     await page.goto("/admin/workspace?widget=menu&stock=out", {
       waitUntil: "domcontentloaded",
@@ -5249,6 +5902,18 @@ async function assertWorkspaceInteractions(browser: Browser, token: string) {
       { left: 0, top: 0 },
       "Reloading a workspace URL with widget params should restore the saved canvas viewport instead of revealing the widget again.",
     );
+
+    await page.goto("/admin/workspace?widget=status", {
+      waitUntil: "domcontentloaded",
+    });
+    const statusModal = page.getByTestId("admin-workspace-status-modal");
+    await expect(statusModal).toBeVisible();
+    await expect(statusModal).toContainText("System status");
+    await expect(
+      statusModal.getByRole("button", { name: /maximize|restore/i }),
+    ).toHaveCount(0);
+    await page.getByTestId("admin-workspace-utility-modal-close").click();
+    await expect(statusModal).toHaveCount(0);
   } finally {
     await context.close();
   }
@@ -5332,6 +5997,10 @@ async function assertModeSwitchAndDeepLinks(browser: Browser, token: string) {
     );
     await expect(page.getByTestId("admin-shell-header")).not.toContainText(
       "Classic",
+    );
+    await expect(page.getByTestId("admin-nav-status")).toHaveAttribute(
+      "href",
+      "/admin/workspace?widget=status",
     );
     await expect(page.getByTestId("admin-nav-dealHistory")).toHaveAttribute(
       "href",
@@ -5596,6 +6265,27 @@ async function main() {
       return;
     }
 
+    if (process.env.ADMIN_WORKSPACE_BROWSER_SMOKE_ONLY === "menu-toolbar") {
+      await assertWorkspaceMenuToolbarManualHide(browser, fixture.tokens.owner);
+      console.log("- workspace menu toolbar manual hide smoke passed");
+      console.log("Admin workspace browser smoke passed.");
+      return;
+    }
+
+    if (process.env.ADMIN_WORKSPACE_BROWSER_SMOKE_ONLY === "space-pan") {
+      await assertWorkspaceSpaceHoldPan(browser, fixture.tokens.owner);
+      console.log("- workspace Space hold pan smoke passed");
+      console.log("Admin workspace browser smoke passed.");
+      return;
+    }
+
+    if (process.env.ADMIN_WORKSPACE_BROWSER_SMOKE_ONLY === "scroll-guidance") {
+      await assertWorkspaceScrollGuidance(browser, fixture.tokens.owner);
+      console.log("- workspace scroll guidance smoke passed");
+      console.log("Admin workspace browser smoke passed.");
+      return;
+    }
+
     await assertRoleWorkspace({
       browser,
       role: "owner",
@@ -5632,6 +6322,15 @@ async function main() {
     console.log(
       "- workspace drag, resize, persistence, and reset smoke passed",
     );
+
+    await assertWorkspaceScrollGuidance(browser, fixture.tokens.owner);
+    console.log("- workspace scroll guidance smoke passed");
+
+    await assertWorkspaceMenuToolbarManualHide(browser, fixture.tokens.owner);
+    console.log("- workspace menu toolbar manual hide smoke passed");
+
+    await assertWorkspaceSpaceHoldPan(browser, fixture.tokens.owner);
+    console.log("- workspace Space hold pan smoke passed");
 
     await assertModeSwitchAndDeepLinks(browser, fixture.tokens.owner);
     console.log("- workspace mode switch and deep-link smoke passed");

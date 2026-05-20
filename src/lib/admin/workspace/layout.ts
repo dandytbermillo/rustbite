@@ -1,5 +1,6 @@
 export type AdminWorkspaceWidgetId =
   | "dashboard"
+  | "status"
   | "orders"
   | "menu"
   | "devices"
@@ -84,6 +85,12 @@ export const ADMIN_WORKSPACE_SIZE_PRESETS: Record<
     { key: "wide", label: "10x6", ...sizeFor(10, 6) },
     { key: "max", label: "10x8", ...sizeFor(10, 8) },
   ],
+  status: [
+    { key: "standard", label: "5x4", ...sizeFor(5, 4) },
+    { key: "large", label: "6x5", ...sizeFor(6, 5) },
+    { key: "wide", label: "8x5", ...sizeFor(8, 5) },
+    { key: "deep", label: "8x7", ...sizeFor(8, 7) },
+  ],
   orders: [
     { key: "standard", label: "6x4", ...sizeFor(6, 4) },
     { key: "large", label: "8x6", ...sizeFor(8, 6) },
@@ -120,6 +127,7 @@ export const ADMIN_WORKSPACE_WIDGET_LABELS: Record<
   string
 > = {
   dashboard: "Dashboard",
+  status: "System status",
   orders: "Orders",
   menu: "Menu",
   devices: "Devices",
@@ -131,6 +139,7 @@ export const ADMIN_WORKSPACE_CLASSIC_HREFS: Record<
   string
 > = {
   dashboard: "/admin?mode=classic",
+  status: "/admin/workspace?widget=status",
   orders: "/admin/orders",
   menu: "/admin/menu",
   devices: "/admin/devices",
@@ -268,6 +277,10 @@ export function defaultAdminWorkspaceLayout({
     ADMIN_WORKSPACE_SIZE_PRESETS.dashboard.find(
       (preset) => preset.key === "large",
     ) ?? ADMIN_WORKSPACE_SIZE_PRESETS.dashboard[3];
+  const status =
+    ADMIN_WORKSPACE_SIZE_PRESETS.status.find(
+      (preset) => preset.key === "large",
+    ) ?? ADMIN_WORKSPACE_SIZE_PRESETS.status[1];
   const orders =
     ADMIN_WORKSPACE_SIZE_PRESETS.orders.find(
       (preset) => preset.key === "large",
@@ -293,6 +306,17 @@ export function defaultAdminWorkspaceLayout({
       zIndex: 1,
     },
     {
+      id: "status",
+      x:
+        ADMIN_WORKSPACE_GRID_OFFSET +
+        dashboard.width +
+        ADMIN_WORKSPACE_GRID_GAP,
+      y: ADMIN_WORKSPACE_GRID_OFFSET,
+      width: status.width,
+      height: status.height,
+      zIndex: 2,
+    },
+    {
       id: "attention",
       x: ADMIN_WORKSPACE_GRID_OFFSET,
       y:
@@ -301,24 +325,28 @@ export function defaultAdminWorkspaceLayout({
         ADMIN_WORKSPACE_GRID_GAP,
       width: attention.width,
       height: attention.height,
-      zIndex: 2,
+      zIndex: 3,
     },
     {
       id: "orders",
       x:
         ADMIN_WORKSPACE_GRID_OFFSET +
         dashboard.width +
+        status.width +
+        ADMIN_WORKSPACE_GRID_GAP +
         ADMIN_WORKSPACE_GRID_GAP,
       y: ADMIN_WORKSPACE_GRID_OFFSET,
       width: orders.width,
       height: orders.height,
-      zIndex: 3,
+      zIndex: 4,
     },
     {
       id: "devices",
       x:
         ADMIN_WORKSPACE_GRID_OFFSET +
         dashboard.width +
+        status.width +
+        ADMIN_WORKSPACE_GRID_GAP +
         ADMIN_WORKSPACE_GRID_GAP,
       y:
         ADMIN_WORKSPACE_GRID_OFFSET +
@@ -326,7 +354,7 @@ export function defaultAdminWorkspaceLayout({
         ADMIN_WORKSPACE_GRID_GAP,
       width: devices.width,
       height: devices.height,
-      zIndex: 4,
+      zIndex: 5,
     },
     {
       id: "menu",
@@ -339,7 +367,7 @@ export function defaultAdminWorkspaceLayout({
         ADMIN_WORKSPACE_GRID_GAP,
       width: menu.width,
       height: menu.height,
-      zIndex: 5,
+      zIndex: 6,
     },
   ];
 

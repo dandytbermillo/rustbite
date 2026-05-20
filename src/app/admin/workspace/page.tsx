@@ -19,6 +19,7 @@ import {
   buildAdminWorkspaceMenuSummary,
   workspaceMenuFilterFromParams,
 } from "@/lib/admin/workspace/menu-summary";
+import { buildAdminWorkspaceSystemStatusSummary } from "@/lib/admin/workspace/system-status";
 import AdminWorkspaceClient, {
   type AdminWorkspaceUsersData,
   type WorkspaceUtilityModal,
@@ -62,6 +63,9 @@ function parseWorkspaceUtilityModal(
   value: string | undefined,
 ): WorkspaceUtilityModal | null {
   switch (value) {
+    case "status":
+    case "system-status":
+      return "status";
     case "deal-history":
     case "dealHistory":
       return "dealHistory";
@@ -160,6 +164,7 @@ export default async function AdminWorkspacePage({
 
   const access: AdminWorkspaceWidgetAccess[] = [
     { id: "dashboard", canView: true },
+    { id: "status", canView: true },
     { id: "attention", canView: true },
     { id: "orders", canView: canReadOrders },
     { id: "menu", canView: canReadMenu },
@@ -212,6 +217,12 @@ export default async function AdminWorkspacePage({
         )
       : Promise.resolve(null),
   ]);
+  const systemStatusSummary = await buildAdminWorkspaceSystemStatusSummary({
+    context: permission,
+    cookies: cookieStore,
+    dashboardSummary,
+    devicesSummary,
+  });
 
   return (
     <AdminWorkspaceClient
@@ -231,6 +242,7 @@ export default async function AdminWorkspacePage({
       initialUtilityModal={initialUtilityModal}
       initialDevicesModalDeviceId={initialDevicesModalDeviceId}
       dashboardSummary={dashboardSummary}
+      systemStatusSummary={systemStatusSummary}
       ordersSummary={ordersSummary}
       initialOrdersTargetOrderId={initialOrdersTargetOrderId}
       menuSummary={menuSummary}

@@ -29,6 +29,10 @@ function deviceStateLabel(state: DashboardDevice["state"]): string {
   return "Disabled";
 }
 
+function devicePresenceLabel(device: DashboardDevice): string {
+  return device.presenceLabel ?? deviceStateLabel(device.state);
+}
+
 function detailValue(value: string | null | undefined): string {
   return value && value.trim() ? value : "Not recorded";
 }
@@ -204,7 +208,7 @@ export default function DashboardDeviceFleetPanel({
                         selectedDevice.state,
                       )}`}
                     >
-                      {deviceStateLabel(selectedDevice.state)}
+                      {devicePresenceLabel(selectedDevice)}
                     </span>
                   </div>
                   <div className="text-sm font-semibold text-stone-500">
@@ -223,6 +227,7 @@ export default function DashboardDeviceFleetPanel({
                 {(
                   [
                     ["Screen", selectedDevice.screen],
+                    ["Presence", devicePresenceLabel(selectedDevice)],
                     ["Session", selectedDevice.session],
                     [
                       "Active operator",

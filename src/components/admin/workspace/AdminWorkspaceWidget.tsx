@@ -12,6 +12,7 @@ import type { AdminWorkspaceDashboardSummary } from "@/lib/admin/workspace/dashb
 import type { AdminWorkspaceDevicesSummary } from "@/lib/admin/workspace/devices-summary";
 import type { AdminWorkspaceMenuSummary } from "@/lib/admin/workspace/menu-summary";
 import type { AdminWorkspaceOrdersSummary } from "@/lib/admin/workspace/orders-summary";
+import type { WorkspaceSystemStatusSummary } from "@/lib/admin/workspace/system-status-model";
 import {
   ADMIN_WORKSPACE_WIDGET_LABELS,
   type AdminWorkspaceLayoutWidget,
@@ -30,6 +31,7 @@ import AdminWorkspaceMenuWidget, {
 import AdminWorkspaceOrdersWidget, {
   type AdminWorkspaceOrdersFocusRequest,
 } from "./AdminWorkspaceOrdersWidget";
+import AdminWorkspaceSystemStatusWidget from "./AdminWorkspaceSystemStatusWidget";
 import type { AdminWorkspaceNotify } from "./AdminWorkspaceToastHost";
 
 function PlaceholderBody({
@@ -37,6 +39,7 @@ function PlaceholderBody({
   canWriteMenu,
   canManageDevices,
   dashboardSummary,
+  systemStatusSummary,
   ordersSummary,
   initialOrdersTargetOrderId,
   ordersFocusRequest,
@@ -55,6 +58,7 @@ function PlaceholderBody({
   canWriteMenu: boolean;
   canManageDevices: boolean;
   dashboardSummary: AdminWorkspaceDashboardSummary;
+  systemStatusSummary: WorkspaceSystemStatusSummary;
   ordersSummary: AdminWorkspaceOrdersSummary | null;
   initialOrdersTargetOrderId: string | null;
   ordersFocusRequest: AdminWorkspaceOrdersFocusRequest | null;
@@ -84,11 +88,15 @@ function PlaceholderBody({
     );
   }
 
+  if (widget.id === "status") {
+    return <AdminWorkspaceSystemStatusWidget summary={systemStatusSummary} />;
+  }
+
   if (widget.id === "attention") {
     return (
       <div
         data-testid="workspace-attention-real-data"
-        className="grid h-full content-start gap-3 overflow-auto"
+        className="admin-widget-scroll grid h-full content-start gap-3 overflow-auto overscroll-contain"
       >
         <DashboardAttentionPanel
           summary={dashboardSummary.attention}
@@ -267,6 +275,7 @@ export default function AdminWorkspaceWidget({
   canWriteMenu,
   canManageDevices,
   dashboardSummary,
+  systemStatusSummary,
   ordersSummary,
   initialOrdersTargetOrderId,
   ordersFocusRequest,
@@ -294,6 +303,7 @@ export default function AdminWorkspaceWidget({
   canWriteMenu: boolean;
   canManageDevices: boolean;
   dashboardSummary: AdminWorkspaceDashboardSummary;
+  systemStatusSummary: WorkspaceSystemStatusSummary;
   ordersSummary: AdminWorkspaceOrdersSummary | null;
   initialOrdersTargetOrderId: string | null;
   ordersFocusRequest: AdminWorkspaceOrdersFocusRequest | null;
@@ -329,6 +339,7 @@ export default function AdminWorkspaceWidget({
   const returnLabel = returnTarget
     ? ADMIN_WORKSPACE_WIDGET_LABELS[returnTarget]
     : null;
+  const canMaximize = widget.id !== "status";
 
   // Maximize is implemented by the canvas mutating the widget's actual
   // bounds to viewport size + smooth-scrolling to it (same path as a
@@ -358,7 +369,7 @@ export default function AdminWorkspaceWidget({
           isMaximized ? "cursor-default" : "cursor-grab active:cursor-grabbing"
         }`}
         onPointerDown={onDragStart}
-        onDoubleClick={onToggleMaximize}
+        onDoubleClick={canMaximize ? onToggleMaximize : undefined}
       >
         <div className="flex min-w-0 items-center gap-2">
           <GripHorizontal
@@ -383,30 +394,32 @@ export default function AdminWorkspaceWidget({
               Back to {returnLabel}
             </button>
           )}
-          <button
-            type="button"
-            data-testid={`admin-workspace-maximize-${widget.id}`}
-            onClick={onToggleMaximize}
-            aria-pressed={isMaximized}
-            title={
-              isMaximized
-                ? "Restore widget (Esc)"
-                : "Maximize widget (double-click title)"
-            }
-            className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-stone-700 hover:border-stone-400"
-          >
-            {isMaximized ? (
-              <>
-                <Minimize2 size={12} strokeWidth={2.5} aria-hidden />
-                Restore
-              </>
-            ) : (
-              <>
-                <Maximize2 size={12} strokeWidth={2.5} aria-hidden />
-                Maximize
-              </>
-            )}
-          </button>
+          {canMaximize && (
+            <button
+              type="button"
+              data-testid={`admin-workspace-maximize-${widget.id}`}
+              onClick={onToggleMaximize}
+              aria-pressed={isMaximized}
+              title={
+                isMaximized
+                  ? "Restore widget (Esc)"
+                  : "Maximize widget (double-click title)"
+              }
+              className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-stone-700 hover:border-stone-400"
+            >
+              {isMaximized ? (
+                <>
+                  <Minimize2 size={12} strokeWidth={2.5} aria-hidden />
+                  Restore
+                </>
+              ) : (
+                <>
+                  <Maximize2 size={12} strokeWidth={2.5} aria-hidden />
+                  Maximize
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -419,6 +432,7 @@ export default function AdminWorkspaceWidget({
           canWriteMenu={canWriteMenu}
           canManageDevices={canManageDevices}
           dashboardSummary={dashboardSummary}
+          systemStatusSummary={systemStatusSummary}
           ordersSummary={ordersSummary}
           initialOrdersTargetOrderId={initialOrdersTargetOrderId}
           ordersFocusRequest={ordersFocusRequest}

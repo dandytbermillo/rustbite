@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { AdminWorkspaceDashboardSummary } from "@/lib/admin/workspace/dashboard-summary";
 import type { AdminWorkspaceDevicesSummary } from "@/lib/admin/workspace/devices-summary";
@@ -9,6 +9,7 @@ import type {
   WorkspaceOrdersFilterKey,
 } from "@/lib/admin/workspace/orders-summary";
 import type { AdminWorkspaceMenuSummary } from "@/lib/admin/workspace/menu-summary";
+import type { WorkspaceSystemStatusSummary } from "@/lib/admin/workspace/system-status-model";
 import type { MenuAttention } from "@/lib/admin/filters/types";
 import {
   ADMIN_WORKSPACE_GRID_CELL_SIZE,
@@ -73,6 +74,15 @@ type WorkspaceReturnTarget = {
 
 const WORKSPACE_VIEWPORT_STORAGE_VERSION = 1;
 const WORKSPACE_VIEWPORT_RESTORE_REQUEST_TTL_MS = 5 * 60 * 1000;
+const SCROLL_GUIDANCE_THROTTLE_MS = 3000;
+const SCROLL_GUIDANCE_DURATION_MS = 2600;
+
+type ScrollGuidanceKey = "enable-pan" | "disable-pan";
+
+const SCROLL_GUIDANCE_MESSAGES: Record<ScrollGuidanceKey, string> = {
+  "enable-pan": "Hold Space bar or use Pan to move around the workspace.",
+  "disable-pan": "Turn off Pan to scroll this widget.",
+};
 
 function isNoDragTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -81,6 +91,120 @@ function isNoDragTarget(target: EventTarget | null): boolean {
       "button,a,input,textarea,select,[role='button'],[data-no-drag]",
     ),
   );
+}
+
+function canElementScrollVertically(el: HTMLElement): boolean {
+  return el.scrollHeight > el.clientHeight + 1;
+}
+
+function widgetScrollContainerAncestors(
+  target: EventTarget | null,
+  root: HTMLElement,
+): HTMLElement[] {
+  if (!(target instanceof Element)) return [];
+  // Invariant: Workspace .admin-widget-scroll containers must also use
+  // overscroll-contain. Widgets may still nest scroll surfaces, so dead-scroll
+  // detection has to consider the nearest widget scroll plus its widget-scroll
+  // ancestors before deciding the target is a non-scrollable widget area.
+  const scrollContainers: HTMLElement[] = [];
+  let current = target.closest<HTMLElement>(".admin-widget-scroll");
+  while (current) {
+    if (!root.contains(current)) break;
+    scrollContainers.push(current);
+    current = current.parentElement?.closest<HTMLElement>(
+      ".admin-widget-scroll",
+    ) ?? null;
+  }
+  return scrollContainers;
+}
+
+function widgetKeyForScrollTarget(scrollTarget: HTMLElement): string | null {
+  return (
+    scrollTarget.closest<HTMLElement>(
+      '[data-testid^="admin-workspace-widget-"]',
+    )?.dataset.testid ?? null
+  );
+}
+
+function rectContainsPoint(rect: DOMRect, clientX: number, clientY: number) {
+  return (
+    clientX >= rect.left &&
+    clientX <= rect.right &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom
+  );
+}
+
+function numericZIndex(el: HTMLElement): number {
+  const raw = el.style.zIndex || window.getComputedStyle(el).zIndex;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function elementDepthWithin(el: HTMLElement, root: HTMLElement): number {
+  let depth = 0;
+  let current = el.parentElement;
+  while (current && current !== root) {
+    depth += 1;
+    current = current.parentElement;
+  }
+  return depth;
+}
+
+function widgetScrollContainerAtPoint({
+  canvas,
+  clientX,
+  clientY,
+}: {
+  canvas: HTMLElement;
+  clientX: number;
+  clientY: number;
+}): HTMLElement | null {
+  let topWidget: { el: HTMLElement; zIndex: number; index: number } | null =
+    null;
+
+  const canvasChildren = Array.from(canvas.children);
+  for (let index = 0; index < canvasChildren.length; index += 1) {
+    const child = canvasChildren[index];
+    if (!(child instanceof HTMLElement)) continue;
+    const testId = child.getAttribute("data-testid") ?? "";
+    if (!testId.startsWith("admin-workspace-widget-")) continue;
+    if (!rectContainsPoint(child.getBoundingClientRect(), clientX, clientY)) {
+      continue;
+    }
+    const zIndex = numericZIndex(child);
+    if (
+      !topWidget ||
+      zIndex > topWidget.zIndex ||
+      (zIndex === topWidget.zIndex && index > topWidget.index)
+    ) {
+      topWidget = { el: child, zIndex, index };
+    }
+  }
+
+  if (!topWidget) return null;
+  const topWidgetEl = topWidget.el;
+
+  let bestScroll: { el: HTMLElement; depth: number; index: number } | null =
+    null;
+  const scrollContainers = Array.from(
+    topWidgetEl.querySelectorAll<HTMLElement>(".admin-widget-scroll"),
+  ).filter((el) =>
+    rectContainsPoint(el.getBoundingClientRect(), clientX, clientY),
+  );
+  for (let index = 0; index < scrollContainers.length; index += 1) {
+    const el = scrollContainers[index];
+    const depth = elementDepthWithin(el, topWidgetEl);
+    if (
+      !bestScroll ||
+      depth > bestScroll.depth ||
+      (depth === bestScroll.depth && index > bestScroll.index)
+    ) {
+      bestScroll = { el, depth, index };
+    }
+  }
+
+  return bestScroll?.el ?? null;
 }
 
 function canvasBounds(widgets: AdminWorkspaceLayoutWidget[]) {
@@ -295,6 +419,7 @@ export default function AdminWorkspaceCanvas({
   initialFocusWidgetId,
   visibleWidgetCount,
   dashboardSummary,
+  systemStatusSummary,
   ordersSummary,
   initialOrdersTargetOrderId,
   menuSummary,
@@ -316,6 +441,7 @@ export default function AdminWorkspaceCanvas({
   initialFocusWidgetId: AdminWorkspaceWidgetId | null;
   visibleWidgetCount: number;
   dashboardSummary: AdminWorkspaceDashboardSummary;
+  systemStatusSummary: WorkspaceSystemStatusSummary;
   ordersSummary: AdminWorkspaceOrdersSummary | null;
   initialOrdersTargetOrderId: string | null;
   menuSummary: AdminWorkspaceMenuSummary | null;
@@ -415,6 +541,14 @@ export default function AdminWorkspaceCanvas({
   const pendingRevealWidgetRef = useRef<AdminWorkspaceWidgetId | null>(null);
   const viewportReadyRef = useRef(false);
   const viewportPersistTimerRef = useRef<number | null>(null);
+  const panActivationRef = useRef(panActivation);
+  const scrollGuidanceRef = useRef<{
+    key: ScrollGuidanceKey;
+    shownAt: number;
+  } | null>(null);
+  const enablePanGuidedWidgetKeysRef = useRef<Set<string>>(new Set());
+  const disablePanGuidedWidgetKeysRef = useRef<Set<string>>(new Set());
+  panActivationRef.current = panActivation;
   const [dragState, setDragState] = useState<DragState | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
@@ -473,6 +607,108 @@ export default function AdminWorkspaceCanvas({
   } | null>(null);
 
   useEffect(() => {
+    if (panActivation === null) {
+      disablePanGuidedWidgetKeysRef.current.clear();
+    } else {
+      enablePanGuidedWidgetKeysRef.current.clear();
+    }
+  }, [panActivation]);
+
+  const notifyScrollGuidance = useCallback(
+    (key: ScrollGuidanceKey) => {
+      const now = Date.now();
+      const previous = scrollGuidanceRef.current;
+      if (
+        previous?.key === key &&
+        now - previous.shownAt < SCROLL_GUIDANCE_THROTTLE_MS
+      ) {
+        return false;
+      }
+      scrollGuidanceRef.current = { key, shownAt: now };
+      notify({
+        message: SCROLL_GUIDANCE_MESSAGES[key],
+        tone: "info",
+        durationMs: SCROLL_GUIDANCE_DURATION_MS,
+      });
+      return true;
+    },
+    [notify],
+  );
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const wheelContainer = container;
+
+    function onWheel(event: WheelEvent) {
+      if (event.deltaY === 0) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="dialog"][aria-modal="true"]')
+      ) {
+        return;
+      }
+
+      const isCurrentlyPanMode = panActivationRef.current !== null;
+      if (!isCurrentlyPanMode) {
+        const scrollTargets = widgetScrollContainerAncestors(
+          event.target,
+          wheelContainer,
+        );
+        if (scrollTargets.length === 0) return;
+        const hasScrollableWidgetContent = scrollTargets.some((scrollTarget) =>
+          canElementScrollVertically(scrollTarget),
+        );
+        if (!hasScrollableWidgetContent) {
+          const widgetKey = widgetKeyForScrollTarget(scrollTargets[0]);
+          if (
+            widgetKey &&
+            enablePanGuidedWidgetKeysRef.current.has(widgetKey)
+          ) {
+            return;
+          }
+          const didNotify = notifyScrollGuidance("enable-pan");
+          if (didNotify && widgetKey) {
+            enablePanGuidedWidgetKeysRef.current.add(widgetKey);
+          }
+        }
+        return;
+      }
+
+      const canvas = wheelContainer.querySelector<HTMLElement>(
+        '[data-testid="admin-workspace-canvas"]',
+      );
+      if (!canvas) return;
+      const scrollTarget = widgetScrollContainerAtPoint({
+        canvas,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+      if (scrollTarget && canElementScrollVertically(scrollTarget)) {
+        const widgetKey = widgetKeyForScrollTarget(scrollTarget);
+        if (
+          widgetKey &&
+          disablePanGuidedWidgetKeysRef.current.has(widgetKey)
+        ) {
+          return;
+        }
+        const didNotify = notifyScrollGuidance("disable-pan");
+        if (didNotify && widgetKey) {
+          disablePanGuidedWidgetKeysRef.current.add(widgetKey);
+        }
+      }
+    }
+
+    wheelContainer.addEventListener("wheel", onWheel, {
+      passive: true,
+      capture: true,
+    });
+    return () => {
+      wheelContainer.removeEventListener("wheel", onWheel, { capture: true });
+    };
+  }, [notifyScrollGuidance]);
+
+  useEffect(() => {
     function shouldSkipSpace(target: EventTarget | null): boolean {
       if (!(target instanceof HTMLElement)) return false;
       if (target.isContentEditable) return true;
@@ -495,9 +731,9 @@ export default function AdminWorkspaceCanvas({
         '[role="dialog"][aria-modal="true"]',
       );
       if (modalOpen) return;
+      e.preventDefault();
       setPanActivation((prev) => {
         if (prev !== null) return prev; // button-toggled, leave alone
-        e.preventDefault();
         return "space";
       });
     }
@@ -640,8 +876,13 @@ export default function AdminWorkspaceCanvas({
       const hasRestoreRequest =
         Boolean(savedViewport) &&
         consumeWorkspaceViewportRestoreRequest(restoreRequestStorageKey);
+      const savedViewportMatchesRequestedWidget =
+        Boolean(initialFocusWidgetId) &&
+        savedViewport?.activeWidgetId === initialFocusWidgetId;
       const shouldRestoreReloadViewport =
-        Boolean(savedViewport) && (isBrowserReload() || hasRestoreRequest);
+        Boolean(savedViewport) &&
+        (isBrowserReload() || hasRestoreRequest) &&
+        (!initialFocusWidgetId || savedViewportMatchesRequestedWidget);
 
       if (initialFocusWidgetId && !shouldRestoreReloadViewport) {
         pendingViewportRestoreRef.current = null;
@@ -1506,6 +1747,7 @@ export default function AdminWorkspaceCanvas({
               canWriteMenu={canWriteMenu}
               canManageDevices={canManageDevices}
               dashboardSummary={dashboardSummary}
+              systemStatusSummary={systemStatusSummary}
               ordersSummary={ordersSummary}
               initialOrdersTargetOrderId={initialOrdersTargetOrderId}
               ordersFocusRequest={ordersFocusRequest}

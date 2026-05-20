@@ -24,6 +24,11 @@ export type DeviceRow = {
     outletName: string;
   }>;
   lastSeenAt: string | null;
+  presenceKind?: string;
+  presenceLabel?: string;
+  presenceReason?: string | null;
+  presenceLastLifecycleAt?: string | null;
+  presenceLastHeartbeatAt?: string | null;
   rotatedAt: string | null;
   createdAt: string;
   updatedAt: string;

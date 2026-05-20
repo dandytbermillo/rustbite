@@ -23,6 +23,7 @@ import type {
 } from "@/lib/types";
 import { withObservability } from "@/lib/observability/route-context";
 import { captureException } from "@/lib/observability/server";
+import { logPaymentCorrelation } from "@/lib/observability/structured-logs";
 import {
   createPaymentTransactionWithSyncEvent,
   updatePaymentTransactionWithSyncEvent,
@@ -104,6 +105,8 @@ export async function POST(req: NextRequest) {
     if (!outletId) {
       return paymentSessionError("Device outlet is not configured.", 403);
     }
+    if (actor.deviceId) obsCtx.deviceId = actor.deviceId;
+    obsCtx.outletId = outletId;
 
     let body;
     try {
@@ -167,6 +170,13 @@ export async function POST(req: NextRequest) {
           context: syncContext,
         })
       );
+      logPaymentCorrelation({
+        action: "payment_session_created",
+        transactionId: transaction.id,
+        status: transaction.status,
+        provider: transaction.provider,
+        context: obsCtx,
+      });
 
       if (isCounterPayment || isMockPayment) {
         return NextResponse.json(serializePaymentSession(transaction), { status: 201 });
@@ -183,7 +193,7 @@ export async function POST(req: NextRequest) {
             "Stripe Terminal is not configured. Required env vars: STRIPE_SECRET_KEY, STRIPE_TERMINAL_READER_ID.",
           ),
         );
-        await prisma.$transaction((tx) =>
+        const configFailed = await prisma.$transaction((tx) =>
           updatePaymentTransactionWithSyncEvent(tx, {
             id: transaction.id,
             data: {
@@ -194,6 +204,13 @@ export async function POST(req: NextRequest) {
             context: syncContext,
           })
         );
+        logPaymentCorrelation({
+          action: "stripe_terminal_config_failed",
+          transactionId: configFailed.id,
+          status: configFailed.status,
+          provider: configFailed.provider,
+          context: obsCtx,
+        });
         return paymentSessionError(PAYMENT_PROCESSING_FAILED_MESSAGE, 500);
       }
 
@@ -221,6 +238,15 @@ export async function POST(req: NextRequest) {
             context: syncContext,
           })
         );
+        logPaymentCorrelation({
+          action: "stripe_terminal_processed",
+          transactionId: updated.id,
+          status: updated.status,
+          provider: updated.provider,
+          providerPaymentIntentId: updated.providerPaymentIntentId,
+          providerReaderId: updated.providerReaderId,
+          context: obsCtx,
+        });
 
         return NextResponse.json(serializePaymentSession(updated), { status: 201 });
       } catch (err) {
@@ -239,6 +265,15 @@ export async function POST(req: NextRequest) {
             context: syncContext,
           })
         );
+        logPaymentCorrelation({
+          action: "stripe_terminal_failed",
+          transactionId: failed.id,
+          status: failed.status,
+          provider: failed.provider,
+          providerPaymentIntentId: failed.providerPaymentIntentId,
+          providerReaderId: failed.providerReaderId,
+          context: obsCtx,
+        });
         return NextResponse.json(serializePaymentSession(failed), { status: 502 });
       }
     } catch (err) {

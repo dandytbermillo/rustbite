@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ConfirmationScreen from "@/components/kiosk/ConfirmationScreen";
 import CartScreen from "@/components/kiosk/CartScreen";
 import CustomizeScreen from "@/components/kiosk/CustomizeScreen";
+import DevicePresenceReporter from "@/components/device/DevicePresenceReporter";
 import LargeTextToggle from "@/components/kiosk/LargeTextToggle";
 import MenuScreen from "@/components/kiosk/MenuScreen";
 import OrderTypeScreen from "@/components/kiosk/OrderTypeScreen";
@@ -25,6 +26,7 @@ import {
   isSuccessfulPaymentStatus,
   isTerminalPendingStatus,
 } from "@/lib/payments";
+import { KIOSK_SURFACE_SEARCH } from "@/lib/kiosk-surface-request";
 import { GST_RATE, computeLineTotal, round2 } from "@/lib/pricing";
 import { snapshotFromUpgradeOption } from "@/lib/upgrade-snapshot";
 import type {
@@ -98,7 +100,9 @@ function pickActiveCategory(current: string, categories: CategoryDTO[]): string 
 }
 
 async function fetchMenuData(): Promise<MenuResponse> {
-  const response = await fetch("/api/menu", { cache: "no-store" });
+  const response = await fetch(`/api/menu?${KIOSK_SURFACE_SEARCH}`, {
+    cache: "no-store",
+  });
   if (response.status === 401) {
     redirectToDeviceLogin(DEVICE_NEXT_PATH);
     throw new Error("Device session expired.");
@@ -110,7 +114,9 @@ async function fetchMenuData(): Promise<MenuResponse> {
 }
 
 async function fetchMenuVersion(): Promise<MenuVersionResponse> {
-  const response = await fetch("/api/menu/version", { cache: "no-store" });
+  const response = await fetch(`/api/menu/version?${KIOSK_SURFACE_SEARCH}`, {
+    cache: "no-store",
+  });
   if (response.status === 401) {
     redirectToDeviceLogin(DEVICE_NEXT_PATH);
     throw new Error("Device session expired.");
@@ -383,7 +389,7 @@ export default function KioskPage() {
     };
 
     if (typeof EventSource !== "undefined") {
-      eventSource = new EventSource("/api/menu/events");
+      eventSource = new EventSource(`/api/menu/events?${KIOSK_SURFACE_SEARCH}`);
       eventSource.onopen = () => {
         sseOpen = true;
         lastSseAt = Date.now();
@@ -1064,6 +1070,7 @@ export default function KioskPage() {
         fontFamily: "'Archivo', 'Inter', system-ui, sans-serif",
       }}
     >
+      <DevicePresenceReporter surface="kiosk" />
       {screen === "welcome" && <WelcomeScreen onStart={() => setScreen("orderType")} />}
 
       {screen === "orderType" && (

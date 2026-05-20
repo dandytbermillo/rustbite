@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import DevicePresenceReporter from "@/components/device/DevicePresenceReporter";
 import { BRAND } from "@/lib/brand";
 import { redirectToDeviceLogin } from "@/lib/device-client-auth";
 import { ACTIVE_KITCHEN_STATUSES } from "@/lib/order-status";
@@ -132,6 +133,7 @@ export default function KitchenPage() {
 
   return (
     <main className="min-h-screen p-6" style={{ background: BRAND.black, color: "white" }}>
+      <DevicePresenceReporter surface="kitchen" />
       <header className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div

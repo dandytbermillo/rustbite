@@ -7,6 +7,7 @@ import { syncStripeTerminalPayment } from "@/lib/stripe-terminal";
 import type { PaymentSessionSummary, PaymentTransactionStatus } from "@/lib/types";
 import { withObservability } from "@/lib/observability/route-context";
 import { captureException } from "@/lib/observability/server";
+import { logPaymentCorrelation } from "@/lib/observability/structured-logs";
 import { updatePaymentTransactionWithSyncEvent } from "@/lib/supabase-sync/outbox";
 
 // Customer-facing sanitized message stored in DB AND returned to kiosk
@@ -62,6 +63,9 @@ export async function GET(
     const auth = await authorizeDeviceApiAccess(req, ["kiosk"]);
     if (auth.response) return auth.response;
     const actor = auth.actor!;
+    const outletId = actor.allowedOutletIds[0] ?? actor.outletId;
+    if (outletId) obsCtx.outletId = outletId;
+    if (actor.deviceId) obsCtx.deviceId = actor.deviceId;
     const syncContext = {
       clientType: actor.role,
       deviceId: actor.deviceId,
@@ -86,6 +90,15 @@ export async function GET(
     ) {
       const pendingTransaction = transaction;
       const providerPaymentIntentId = transaction.providerPaymentIntentId;
+      logPaymentCorrelation({
+        action: "stripe_terminal_poll_started",
+        transactionId: pendingTransaction.id,
+        status: pendingTransaction.status,
+        provider: pendingTransaction.provider,
+        providerPaymentIntentId,
+        providerReaderId: pendingTransaction.providerReaderId,
+        context: obsCtx,
+      });
       try {
         const sync = await syncStripeTerminalPayment({
           providerPaymentIntentId,
@@ -109,6 +122,15 @@ export async function GET(
             context: syncContext,
           })
         );
+        logPaymentCorrelation({
+          action: "stripe_terminal_poll_synced",
+          transactionId: transaction.id,
+          status: transaction.status,
+          provider: transaction.provider,
+          providerPaymentIntentId: transaction.providerPaymentIntentId,
+          providerReaderId: transaction.providerReaderId,
+          context: obsCtx,
+        });
       } catch (err) {
         captureException(err);
         transaction = await prisma.$transaction((tx) =>
@@ -124,6 +146,15 @@ export async function GET(
             context: syncContext,
           })
         );
+        logPaymentCorrelation({
+          action: "stripe_terminal_poll_failed",
+          transactionId: transaction.id,
+          status: transaction.status,
+          provider: transaction.provider,
+          providerPaymentIntentId: transaction.providerPaymentIntentId,
+          providerReaderId: transaction.providerReaderId,
+          context: obsCtx,
+        });
       }
     }
 

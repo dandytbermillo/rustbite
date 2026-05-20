@@ -402,7 +402,7 @@ export default function AdminWorkspaceDashboardWidget({
   return (
     <div
       data-testid="workspace-dashboard-real-data"
-      className="grid h-full content-start gap-4 overflow-auto bg-white"
+      className="admin-widget-scroll grid h-full content-start gap-4 overflow-auto overscroll-contain bg-white"
     >
       <div className="rounded-xl border border-stone-200 bg-stone-950 px-4 py-3 text-white shadow-sm">
         <div className="flex items-start justify-between gap-3">

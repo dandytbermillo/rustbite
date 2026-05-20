@@ -20,6 +20,7 @@ const widthForCells = (cells: number) =>
 const outletId = "workspace-test-outlet";
 const access: AdminWorkspaceWidgetAccess[] = [
   { id: "dashboard", canView: true },
+  { id: "status", canView: true },
   { id: "attention", canView: true },
   { id: "orders", canView: true },
   { id: "devices", canView: true },
@@ -34,7 +35,7 @@ function main() {
   });
   assert.deepEqual(
     defaultLayout.widgets.map((widget) => widget.id),
-    ["dashboard", "attention", "orders", "devices"],
+    ["dashboard", "status", "attention", "orders", "devices"],
     "default layout should omit unauthorized widgets",
   );
 

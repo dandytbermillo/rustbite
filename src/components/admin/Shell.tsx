@@ -11,6 +11,7 @@ import AdminAttentionWidget from "@/components/admin/AdminAttentionWidget";
 
 type AdminShellActive =
   | "dashboard"
+  | "status"
   | "menu"
   | "dealHistory"
   | "orders"
@@ -62,6 +63,13 @@ const NAV_ITEMS: AdminNavItem[] = [
     label: "Users",
     permission: "admin.auth.users.manage",
     group: "primary",
+  },
+  {
+    key: "status",
+    href: "/admin/workspace?widget=status",
+    label: "System status",
+    permission: "admin.dashboard.read",
+    group: "more",
   },
   {
     key: "dealHistory",

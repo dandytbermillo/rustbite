@@ -110,6 +110,7 @@ export function parseWorkspaceWidgetId(
 ): AdminWorkspaceWidgetId | null {
   if (
     value === "dashboard" ||
+    value === "status" ||
     value === "orders" ||
     value === "menu" ||
     value === "devices" ||

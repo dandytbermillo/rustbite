@@ -46,6 +46,7 @@ import {
   verifyInternalRequestIdHeader,
 } from "./request-id";
 import { captureException } from "./server";
+import { logRequestCompleted, routePatternFromUrl } from "./structured-logs";
 import type { CaptureContext, CaptureContextInput } from "./types";
 
 /**
@@ -89,7 +90,7 @@ export type ObservedHandler<TReq extends Request = Request> = (
  */
 export type ExtraContext = Omit<
   CaptureContextInput,
-  "requestId" | "clientRequestId" | "surface"
+  "requestId" | "clientRequestId" | "surface" | "routePattern"
 >;
 
 export type WithObservabilityOptions = {
@@ -138,6 +139,7 @@ export async function withObservability<TReq extends Request = Request>(
   options?: WithObservabilityOptions,
 ): Promise<Response> {
   const ctx = await resolveContext(req, options);
+  const startedAtMs = Date.now();
   let response: Response;
   try {
     response = await runWithRequestContext(ctx, () => handler(req, ctx));
@@ -161,6 +163,13 @@ export async function withObservability<TReq extends Request = Request>(
     }
     response = buildSanitized500(ctx);
   }
+  logRequestCompleted({
+    method: req.method,
+    url: req.url,
+    status: response.status,
+    durationMs: Date.now() - startedAtMs,
+    context: ctx,
+  });
   // resolveContext always sets requestId; the optional type comes from
   // CaptureContext being broad enough for non-request surfaces (jobs).
   return attachRequestIdHeader(response, ctx.requestId ?? "");
@@ -227,6 +236,7 @@ export async function resolveContext<TReq extends Request>(
     ...safeExtra,
     surface,
     requestId,
+    routePattern: routePatternFromUrl(req.url),
     ...(clientRequestId ? { clientRequestId } : {}),
   };
   return ctx;
@@ -246,6 +256,7 @@ function stripCanonicalFields(
     requestId: _droppedReqId,
     clientRequestId: _droppedClientId,
     surface: _droppedSurface,
+    routePattern: _droppedRoutePattern,
     ...rest
   } = cast;
   return rest as ExtraContext;

@@ -14,6 +14,7 @@ import type { AdminWorkspaceDashboardSummary } from "@/lib/admin/workspace/dashb
 import type { AdminWorkspaceDevicesSummary } from "@/lib/admin/workspace/devices-summary";
 import type { AdminWorkspaceOrdersSummary } from "@/lib/admin/workspace/orders-summary";
 import type { AdminWorkspaceMenuSummary } from "@/lib/admin/workspace/menu-summary";
+import type { WorkspaceSystemStatusSummary } from "@/lib/admin/workspace/system-status-model";
 import type {
   AdminOutletRow,
   AdminUserRow,
@@ -25,6 +26,7 @@ import {
   type AdminWorkspaceWidgetId,
 } from "@/lib/admin/workspace/layout";
 import AdminWorkspaceCanvas from "./AdminWorkspaceCanvas";
+import AdminWorkspaceSystemStatusWidget from "./AdminWorkspaceSystemStatusWidget";
 import AdminWorkspaceToastHost, {
   type AdminWorkspaceNotify,
   type AdminWorkspaceToast,
@@ -35,6 +37,7 @@ import UsersManagementPanel, {
 } from "@/components/admin/users/UsersManagementPanel";
 
 export type WorkspaceUtilityModal =
+  | "status"
   | "dealHistory"
   | "settings"
   | "security"
@@ -49,6 +52,7 @@ export type AdminWorkspaceUsersData = {
 };
 
 function utilityModalSearchValue(modal: WorkspaceUtilityModal): string {
+  if (modal === "status") return "status";
   return modal === "dealHistory" ? "deal-history" : modal;
 }
 
@@ -60,6 +64,7 @@ function utilityModalAllowed(
   canManageUsers: boolean,
 ): modal is WorkspaceUtilityModal {
   if (!modal) return false;
+  if (modal === "status") return true;
   if (modal === "dealHistory") return canReadDealHistory;
   if (modal === "settings") return canReadSettings;
   if (modal === "devices") return canReadDevices;
@@ -84,6 +89,7 @@ export default function AdminWorkspaceClient({
   initialUtilityModal,
   initialDevicesModalDeviceId,
   dashboardSummary,
+  systemStatusSummary,
   ordersSummary,
   initialOrdersTargetOrderId,
   menuSummary,
@@ -106,6 +112,7 @@ export default function AdminWorkspaceClient({
   initialUtilityModal: WorkspaceUtilityModal | null;
   initialDevicesModalDeviceId: string | null;
   dashboardSummary: AdminWorkspaceDashboardSummary;
+  systemStatusSummary: WorkspaceSystemStatusSummary;
   ordersSummary: AdminWorkspaceOrdersSummary | null;
   initialOrdersTargetOrderId: string | null;
   menuSummary: AdminWorkspaceMenuSummary | null;
@@ -197,7 +204,9 @@ export default function AdminWorkspaceClient({
         canManageUsers,
       )
         ? initialUtilityModal
-        : null,
+        : initialFocusWidgetId === "status"
+          ? "status"
+          : null,
     );
   const [menuUtilityRequest, setMenuUtilityRequest] = useState<{
     id: number;
@@ -290,6 +299,10 @@ export default function AdminWorkspaceClient({
   }, []);
 
   function requestWidgetFocus(id: AdminWorkspaceWidgetId): void {
+    if (id === "status") {
+      openUtilityModal("status");
+      return;
+    }
     // Modal-open: silent no-op (matches togglePanFromButton precedent).
     // Caught here in addition to canvas-side guards because if a modal is
     // open we don't want pan/URL/dropdown to change either, and the canvas
@@ -322,7 +335,22 @@ export default function AdminWorkspaceClient({
   }
 
   function closeUtilityModal(): void {
+    const closingModal = activeUtilityModal;
     setActiveUtilityModal(null);
+    if (closingModal === "status") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("modal");
+      if (url.searchParams.get("widget") === "status") {
+        url.searchParams.delete("widget");
+      }
+      url.searchParams.delete("device");
+      window.history.replaceState(
+        null,
+        "",
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+      return;
+    }
     replaceWorkspaceModalParam(null);
   }
 
@@ -551,6 +579,7 @@ export default function AdminWorkspaceClient({
           initialFocusWidgetId={initialFocusWidgetId}
           visibleWidgetCount={visibleCount}
           dashboardSummary={dashboardSummary}
+          systemStatusSummary={systemStatusSummary}
           ordersSummary={ordersSummary}
           initialOrdersTargetOrderId={initialOrdersTargetOrderId}
           menuSummary={menuSummary}
@@ -568,6 +597,7 @@ export default function AdminWorkspaceClient({
       {activeUtilityModal && (
         <WorkspaceUtilityDialog
           modal={activeUtilityModal}
+          systemStatusSummary={systemStatusSummary}
           canWriteMenu={canWriteMenu}
           canManageDevices={canManageDevices}
           devicesSummary={currentDevicesSummary}
@@ -737,6 +767,7 @@ function WorkspaceMoreLinks({
 
 function WorkspaceUtilityDialog({
   modal,
+  systemStatusSummary,
   canWriteMenu,
   canManageDevices,
   devicesSummary,
@@ -749,6 +780,7 @@ function WorkspaceUtilityDialog({
   onClose,
 }: {
   modal: WorkspaceUtilityModal;
+  systemStatusSummary: WorkspaceSystemStatusSummary;
   canWriteMenu: boolean;
   canManageDevices: boolean;
   devicesSummary: AdminWorkspaceDevicesSummary | null;
@@ -764,7 +796,9 @@ function WorkspaceUtilityDialog({
   const [devicesDirty, setDevicesDirty] = useState(false);
   const [usersDirty, setUsersDirty] = useState(false);
   const title =
-    modal === "dealHistory"
+    modal === "status"
+      ? "System status"
+      : modal === "dealHistory"
       ? "Deal history"
       : modal === "settings"
         ? "Settings"
@@ -849,8 +883,14 @@ function WorkspaceUtilityDialog({
             Close
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          {modal === "dealHistory" ? (
+        <div
+          className={`min-h-0 flex-1 overflow-y-auto ${
+            modal === "status" ? "p-0" : "p-6"
+          }`}
+        >
+          {modal === "status" ? (
+            <AdminWorkspaceSystemStatusWidget summary={systemStatusSummary} />
+          ) : modal === "dealHistory" ? (
             <WorkspaceDealHistoryPanel
               canWriteMenu={canWriteMenu}
               onRestoreDeal={onRestoreDeal}

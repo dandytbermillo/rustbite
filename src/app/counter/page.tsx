@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Banknote, CheckCircle2, Package, Utensils, XCircle } from "lucide-react";
+import DevicePresenceReporter from "@/components/device/DevicePresenceReporter";
 import { BRAND } from "@/lib/brand";
 import { redirectToDeviceLogin } from "@/lib/device-client-auth";
 import { fmt } from "@/lib/pricing";
@@ -121,6 +122,7 @@ export default function CounterPage() {
       className="min-h-screen p-6"
       style={{ background: BRAND.black, color: "white" }}
     >
+      <DevicePresenceReporter surface="counter" />
       <header className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
           <div

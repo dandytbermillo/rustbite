@@ -54,6 +54,25 @@ export async function buildAdminWorkspaceDevicesSummary({
     ),
   ]);
 
+  const fleetById = new Map(
+    (summary.deviceFleet?.devices ?? []).map((device) => [device.id, device]),
+  );
+  const workspaceDevices = devices
+    .filter((device) => deviceBelongsToOutlet(device, context.outletId))
+    .map((device) => {
+      const fleetDevice = fleetById.get(device.id);
+      return fleetDevice
+        ? {
+            ...device,
+            presenceKind: fleetDevice.presenceKind,
+            presenceLabel: fleetDevice.presenceLabel,
+            presenceReason: fleetDevice.presenceReason,
+            presenceLastLifecycleAt: fleetDevice.presenceLastLifecycleAt,
+            presenceLastHeartbeatAt: fleetDevice.presenceLastHeartbeatAt,
+          }
+        : device;
+    });
+
   return {
     generatedAt: summary.generatedAt,
     outletId: summary.outletId,
@@ -65,8 +84,6 @@ export async function buildAdminWorkspaceDevicesSummary({
     deviceHealth: summary.deviceHealth,
     deviceHealthHref: summary.deviceHealthHref,
     deviceFleet: summary.deviceFleet,
-    devices: devices.filter((device) =>
-      deviceBelongsToOutlet(device, context.outletId),
-    ),
+    devices: workspaceDevices,
   };
 }

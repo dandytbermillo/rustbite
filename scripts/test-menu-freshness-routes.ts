@@ -52,6 +52,32 @@ function cookieHeader(...cookies: string[]) {
   return cookies.join("; ");
 }
 
+async function resetKioskHeartbeat() {
+  const oldSeenAt = new Date(Date.now() - 60_000);
+  await prisma.$transaction([
+    prisma.device.update({
+      where: { id: kioskDeviceId },
+      data: { lastSeenAt: null },
+    }),
+    prisma.deviceSession.updateMany({
+      where: { deviceId: kioskDeviceId },
+      data: { lastSeenAt: oldSeenAt },
+    }),
+  ]);
+}
+
+async function assertKioskHeartbeatTouched(message: string) {
+  const device = await prisma.device.findUnique({
+    where: { id: kioskDeviceId },
+    select: { lastSeenAt: true },
+  });
+  assert(device?.lastSeenAt, message);
+  assert(
+    Date.now() - device.lastSeenAt.getTime() < 10_000,
+    `${message} (lastSeenAt should be recent)`
+  );
+}
+
 async function json<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
@@ -261,6 +287,37 @@ async function main() {
   assert.ok(Array.isArray(menuBody.categories), "/api/menu should return categories array.");
   assert.ok(Array.isArray(menuBody.items), "/api/menu should return items array.");
 
+  const mixedAdminKioskCookie = cookieHeader(adminCookie, kioskCookie);
+  await resetKioskHeartbeat();
+  const mixedKioskSurfaceMenu = await menuRoute.GET(
+    request("/api/menu?surface=kiosk", mixedAdminKioskCookie)
+  );
+  assert.equal(
+    mixedKioskSurfaceMenu.status,
+    200,
+    "/api/menu?surface=kiosk should prefer the kiosk device session over admin auth."
+  );
+  const mixedKioskSurfaceMenuBody = await json<{ outletId: string }>(
+    mixedKioskSurfaceMenu
+  );
+  assert.equal(
+    mixedKioskSurfaceMenuBody.outletId,
+    outletId,
+    "/api/menu?surface=kiosk should use the kiosk device outlet."
+  );
+  await assertKioskHeartbeatTouched(
+    "/api/menu?surface=kiosk should mark the registered kiosk device seen."
+  );
+
+  const mixedAdminCounterSurfaceMenu = await menuRoute.GET(
+    request("/api/menu?surface=kiosk", cookieHeader(adminCookie, counterCookie))
+  );
+  assert.equal(
+    mixedAdminCounterSurfaceMenu.status,
+    401,
+    "/api/menu?surface=kiosk should not fall back to admin auth when the device cookie is not kiosk."
+  );
+
   const anonymousVersion = await versionRoute.GET(request("/api/menu/version"));
   assert.equal(
     anonymousVersion.status,
@@ -343,6 +400,31 @@ async function main() {
     "/api/menu/version should return the admin outlet when mixed cookies are present."
   );
 
+  await resetKioskHeartbeat();
+  const mixedKioskSurfaceVersion = await versionRoute.GET(
+    request("/api/menu/version?surface=kiosk", mixedAdminKioskCookie)
+  );
+  assert.equal(
+    mixedKioskSurfaceVersion.status,
+    200,
+    "/api/menu/version?surface=kiosk should prefer the kiosk device session over admin auth."
+  );
+  const mixedKioskSurfaceVersionBody = await json<{
+    outletId: string;
+    revision: number;
+  }>(mixedKioskSurfaceVersion);
+  assert.deepEqual(
+    {
+      outletId: mixedKioskSurfaceVersionBody.outletId,
+      revision: mixedKioskSurfaceVersionBody.revision,
+    },
+    { outletId, revision: bumped.revision },
+    "/api/menu/version?surface=kiosk should use the kiosk outlet."
+  );
+  await assertKioskHeartbeatTouched(
+    "/api/menu/version?surface=kiosk should mark the registered kiosk device seen."
+  );
+
   const anonymousEvents = await eventsRoute.GET(request("/api/menu/events"));
   assert.equal(
     anonymousEvents.status,
@@ -366,6 +448,24 @@ async function main() {
     { outletId: firstEvent.outletId, revision: firstEvent.revision },
     { outletId, revision: bumped.revision },
     "First SSE menu_revision event should identify the kiosk outlet revision."
+  );
+
+  await resetKioskHeartbeat();
+  const firstMixedKioskSurfaceEvent = await readFirstSseEvent(
+    await eventsRoute.GET(
+      request("/api/menu/events?surface=kiosk", mixedAdminKioskCookie)
+    )
+  );
+  assert.deepEqual(
+    {
+      outletId: firstMixedKioskSurfaceEvent.outletId,
+      revision: firstMixedKioskSurfaceEvent.revision,
+    },
+    { outletId, revision: bumped.revision },
+    "Kiosk SSE should prefer the kiosk device session over admin auth."
+  );
+  await assertKioskHeartbeatTouched(
+    "/api/menu/events?surface=kiosk should mark the registered kiosk device seen."
   );
 
   const firstAdminEvent = await readFirstSseEvent(

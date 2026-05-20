@@ -65,6 +65,8 @@ import {
 
 const WORKSPACE_MENU_REFRESH_MS = 30_000;
 
+type MenuToolbarMode = "auto" | "open" | "hidden";
+
 export type AdminWorkspaceMenuFocusRequest = {
   id: number;
   attention: MenuAttention | null;
@@ -1864,18 +1866,15 @@ export default function AdminWorkspaceMenuWidget({
     ) => Promise<void>) | null
   >(null);
 
-  // Toolbar push-toggle (proposal demo at
-  // docs/proposal/widget-sticky-headers-option-c.html). The toolbar lives in
-  // its own height-toggled slot ABOVE the scroll area. At scrollTop=0 the
-  // toolbar is visible naturally. When scrolled past ~160 px the toolbar
-  // collapses and a top-center "Show toolbar" button appears. Click toggles
-  // the manual override (which pushes the toolbar back in without scrolling).
-  // manualOpen resets to false whenever the user scrolls back to the top so
-  // the next scroll-down behaves the same way (toolbar collapses).
+  // Toolbar push-toggle. The toolbar lives in its own height-toggled slot
+  // above the scroll area. Auto mode follows scroll position; explicit user
+  // hidden/open modes persist until the user clicks Show/Hide again.
   const menuScrollRef = useRef<HTMLDivElement | null>(null);
-  const [showSummon, setShowSummon] = useState(false);
-  const [manualOpen, setManualOpen] = useState(false);
-  const toolbarOpen = !showSummon || manualOpen;
+  const [toolbarScrolledAway, setToolbarScrolledAway] = useState(false);
+  const [toolbarMode, setToolbarMode] = useState<MenuToolbarMode>("auto");
+  const toolbarOpen =
+    toolbarMode === "open" ||
+    (toolbarMode === "auto" && !toolbarScrolledAway);
 
   function setOptimisticOrder(categoryId: string, order: string[] | null) {
     setOptimisticOrderByCategory((current) => {
@@ -2386,19 +2385,17 @@ export default function AdminWorkspaceMenuWidget({
     }
   }, [focusRequest]);
 
-  // Toggle the summon button + reset manual override based on scroll position.
+  // Track whether auto mode should collapse the toolbar based on scroll
+  // position. Explicit hidden/open modes are user choices, so scrolling the
+  // menu content must not undo them.
   // Threshold of 160 px is enough that the toolbar (title row + actions + chips
   // + search ≈ 200 px) is mostly out of view before the button fades in.
-  // Resetting manualOpen at the top ensures the next scroll-down behaves the
-  // same way (auto-collapse) — otherwise a user who clicked Show, scrolled to
-  // top, then scrolled down would find the toolbar still wedged open.
   useEffect(() => {
     const el = menuScrollRef.current;
     if (!el) return;
     const onScroll = () => {
       const scrolled = el.scrollTop > 160;
-      setShowSummon(scrolled);
-      if (!scrolled) setManualOpen(false);
+      setToolbarScrolledAway(scrolled);
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -4144,21 +4141,21 @@ export default function AdminWorkspaceMenuWidget({
 
   return (
     <div className="relative grid h-full grid-rows-[auto_1fr] bg-white">
-      {/* Floating summon button — appears once the toolbar has scrolled out of
-          view. Click toggles manualOpen which pushes the toolbar slot back in
-          (no scroll change). Click again to collapse. */}
+      {/* Floating toolbar toggle — one fixed place for both Hide and Show. */}
       <button
         type="button"
-        onClick={() => setManualOpen((v) => !v)}
-        aria-label={manualOpen ? "Hide menu toolbar" : "Show menu toolbar"}
-        aria-expanded={manualOpen}
+        onClick={() => setToolbarMode(toolbarOpen ? "hidden" : "open")}
+        aria-label={toolbarOpen ? "Hide menu toolbar" : "Show menu toolbar"}
+        aria-expanded={toolbarOpen}
         data-testid="workspace-menu-summon-toolbar"
-        className={`absolute left-1/2 top-2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-stone-800 shadow-lg transition-opacity hover:border-stone-500 hover:bg-stone-50 ${
-          showSummon ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
-        }`}
+        className="absolute left-1/2 top-2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-stone-800 shadow-lg hover:border-stone-500 hover:bg-stone-50"
       >
-        <span aria-hidden>{manualOpen ? "▴" : "▾"}</span>
-        <span>{manualOpen ? "Hide toolbar" : "Show toolbar"}</span>
+        {toolbarOpen ? (
+          <EyeOff size={12} strokeWidth={2.5} aria-hidden />
+        ) : (
+          <Eye size={12} strokeWidth={2.5} aria-hidden />
+        )}
+        <span>{toolbarOpen ? "Hide toolbar" : "Show toolbar"}</span>
       </button>
 
       {/* Toolbar slot — height-toggled push. Outside the scroll area so it
